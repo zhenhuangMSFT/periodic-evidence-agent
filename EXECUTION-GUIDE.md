@@ -19,17 +19,35 @@ blocked until the selected authentication path and native execution prerequisite
 are verified. Browser E2E is a separate workstream, not a prerequisite for OA
 in-process integration tests.
 
-A prior private controller revision completed one bounded saved-input
-Collector/FILTER CLI replay, native-skill model authoring, both required
-source-head native legs and automatic push plus one draft PR. Both final case
-executions passed once with 26 assertions each. Emitted runtime import/mocks
-order was verified before push; explicit raw output-file results supplied
-acceptance because the wrapper's default summary was unavailable. No actual CI
-builds were observed in that complete publication window. This selected
-regression-coverage case did not qualify incident RCA, fresh collection/review,
-full-cohort acceptance, unattended first-attempt reliability, hosted Agency,
-browser E2E or target-merge/latest-vendor behavior. Its private artifacts and
-product PR identity are not part of this publication.
+## Verified real execution reference
+
+On October 13, 2026, this procedure completed a real ADO-to-OfficeAgent run
+for the half-open UTC window `2026-10-12T00:00:00Z` through
+`2026-10-13T00:00:00Z`:
+
+```text
+73 unique ADO records
+  -> 73 complete FILTER results
+  -> one reviewed coverage candidate
+  -> one source-bound OfficeAgent assignment
+  -> bounded repository-skill authoring and repair
+  -> both required native source-head validation legs passed
+  -> one Draft PR
+```
+
+Both final case executions passed once with 26 assertions each. Emitted runtime
+import/mocks order was verified before push; explicit raw output-file results
+supplied acceptance because the wrapper's default summary was unavailable. No
+actual CI builds were observed in that complete publication window. The
+sanitized aggregate proof is stored under
+`e2e-evidence/ado-window-discovery-20261012`; private evidence and product PR
+identity remain excluded.
+
+This run proves the declared ADO collection passes, complete FILTER cohort,
+selected candidate lineage, bounded author/repair loop, native validation and
+Draft PR publication. It does **not** prove WorkIQ or IcM coverage, incident
+RCA, unattended first-attempt reliability, hosted Agency, browser E2E or
+target-merge/latest-vendor behavior.
 
 Run commands step by step and stop on a nonzero exit or unresolved gate. The
 examples do not authorize source reads, authentication setup, model jobs,
@@ -506,6 +524,30 @@ outcome. An uncertain submission must be reconciled, not blindly resent.
 At terminal status, seal the evidence and stop the finite monitor. An unresolved
 gate remains blocked; do not merge, enable schedules or create another run
 without the required authorization.
+
+### Export and verify the sanitized success proof
+
+After, and only after, the terminal outcome is `draft-pr-validated`, create a
+private `e2e-proof-request-v1` that binds the original collection sources,
+complete FILTER manifest/results and terminal controller result. Export into a
+new immutable tracked directory:
+
+```powershell
+npm run pilot -- e2e-proof-export `
+  --file .\e2e-proof-request.local.json `
+  --output .\e2e-evidence\<run-id> `
+  --config .\pilot.local.json
+
+npm run pilot -- e2e-proof-check `
+  --file .\e2e-proof-request.local.json `
+  --bundle .\e2e-evidence\<run-id> `
+  --config .\pilot.local.json
+```
+
+Commit only the sanitized bundle. Keep the request, ledgers, raw evidence,
+captures, validation logs, local paths and identities private. The checker
+requires one revision identity across the worker result, passing validation and
+Draft PR head, verifies all hashes, and rejects changed private bindings.
 
 ## Executor selection and further references
 

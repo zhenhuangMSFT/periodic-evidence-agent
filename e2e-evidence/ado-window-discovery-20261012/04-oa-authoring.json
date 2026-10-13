@@ -1,0 +1,36 @@
+{
+  "format": "e2e-proof-authoring-v1",
+  "assignmentId": "assignment-e507a15575d02fa284efd44c06fd2f90803923fb9d0f454cac8dd611d96d3e18",
+  "attemptId": "a0e3599b-c3e6-4e87-bb93-9948d55249d9",
+  "outcome": "draft-pr-validated",
+  "sourceRevision": "056b2116f1cf73f0a8d91edc8df9e8f1bc8f01b9",
+  "evidenceSetSha256": "68d421a25b348f1af6630ab949ce0c718f5a9974e0ee60ce6e38170e71789831",
+  "skillExecution": null,
+  "toolUsage": {
+    "limit": 250,
+    "used": 126,
+    "byTool": {
+      "pilot_list": 2,
+      "pilot_search": 40,
+      "pilot_read": 66,
+      "pilot_write": 1,
+      "pilot_replace_lines": 15,
+      "pilot_finish": 2
+    },
+    "rounds": [
+      {
+        "round": 0,
+        "used": 92,
+        "cumulativeUsed": 92,
+        "status": "completed"
+      },
+      {
+        "round": 1,
+        "used": 34,
+        "cumulativeUsed": 126,
+        "status": "completed"
+      }
+    ],
+    "remaining": 124
+  }
+}

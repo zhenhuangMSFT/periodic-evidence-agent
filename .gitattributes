@@ -1,1 +1,2 @@
 src/filter-capture-verifier.js -text whitespace=trailing-space,space-before-tab,cr-at-eol
+e2e-evidence/** -text

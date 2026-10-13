@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,11 +33,15 @@ test('package check rejects a private file in the index even if gitignore covers
   assert.ok(report.findings.some(f => f.path === 'pilot.local.json' && f.rule === 'runtime/private artifact path'));
 });
 
-test('package check accepts public Agency contracts and verifier byte-preservation attributes', t => {
+test('package check accepts public execution docs and byte-preserved proof bundles', t => {
   const { root, git, inspect } = fixture(t);
   writeFileSync(join(root, 'AGENCY-EXECUTOR.md'), 'Generic offline executor contract\n');
-  writeFileSync(join(root, '.gitattributes'), 'src/filter-capture-verifier.js -text\n');
-  git(['add', 'AGENCY-EXECUTOR.md', '.gitattributes']);
+  writeFileSync(join(root, 'EXECUTION-GUIDE.md'), 'Generic execution procedure\n');
+  mkdirSync(join(root, 'e2e-evidence', 'synthetic-run'), { recursive: true });
+  writeFileSync(join(root, 'e2e-evidence', 'synthetic-run', 'run-manifest.json'), '{"format":"synthetic"}\n');
+  writeFileSync(join(root, '.gitattributes'),
+    'src/filter-capture-verifier.js -text\ne2e-evidence/** -text\n');
+  git(['add', 'AGENCY-EXECUTOR.md', 'EXECUTION-GUIDE.md', 'e2e-evidence', '.gitattributes']);
   assert.equal(inspect().status, 0);
 });
 

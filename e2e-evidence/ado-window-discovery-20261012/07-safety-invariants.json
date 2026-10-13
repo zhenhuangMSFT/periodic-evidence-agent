@@ -1,0 +1,18 @@
+{
+  "format": "e2e-proof-safety-v1",
+  "draftOnly": true,
+  "merged": false,
+  "mergeAuthorization": "not-granted",
+  "sourceWindowChanged": false,
+  "sourceWrites": "unsupported-by-controller-path",
+  "activation": {
+    "collect": false,
+    "review": false,
+    "dispatch": true
+  },
+  "limitations": [
+    "This bundle proves the declared ADO collection passes and selected proposer lineage, not unavailable or unstarted source coverage.",
+    "No claim is made that the source snapshot reconstructs the historical source state at the window boundary.",
+    "The bundle omits raw source bodies, identities, captures, local paths and private execution logs."
+  ]
+}

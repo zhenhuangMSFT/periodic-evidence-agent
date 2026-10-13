@@ -1,0 +1,62 @@
+{
+  "format": "e2e-proof-manifest-v1",
+  "runId": "ado-window-discovery-20261012",
+  "generatedAt": "2026-10-13T17:33:08.099Z",
+  "state": "draft-pr-validated",
+  "window": {
+    "start": "2026-10-12T00:00:00Z",
+    "endExclusive": "2026-10-13T00:00:00Z"
+  },
+  "artifacts": [
+    {
+      "name": "01-collection.json",
+      "sha256": "336b0e675ef32b4bb40ce22ec723f9dfadd048b2014dc80f8af32ee548baaefe"
+    },
+    {
+      "name": "02-filter.json",
+      "sha256": "efc1ec763a78b35171e7a47c781e76feee18d51225a3591855f2270d3f33824d"
+    },
+    {
+      "name": "03-coverage-handoff.json",
+      "sha256": "b0c7b667d3a04afd4ec5da4c3b6f0ea224f53fbc18de5533f0b477d81faffbcf"
+    },
+    {
+      "name": "04-oa-authoring.json",
+      "sha256": "5eb380d00e7432c48e8bd4bead14c67a623c347c5d4f1a75ddbc64a830efaacf"
+    },
+    {
+      "name": "05-validation.json",
+      "sha256": "7a8fedf62f8563a66833510046a09aa39532e31c2e567abc6d9af365dff4eb3b"
+    },
+    {
+      "name": "06-draft-pr.json",
+      "sha256": "35b44c0a249aa78abed88a34b4baa687a80defac0c1224978278d7289ba2f1d1"
+    },
+    {
+      "name": "07-safety-invariants.json",
+      "sha256": "65677e34a0197683acad884d2e723ca1cd42892ea8ca8cafd7d5fe0d250b92b4"
+    },
+    {
+      "name": "README.md",
+      "sha256": "576ec159f43b40a94c6f1250e5f5ac4215e37dcd73c8357fdd44cf4171b3ffae"
+    }
+  ],
+  "privateBindings": {
+    "collectionSourcesSha256": "f31550b8ed8c28921bee310600204b7498a53cecd39c7c38bf231271ca41e395",
+    "filterManifestSha256": "31ee66f3d216f8993d2019783c3a900ca9938e2f3a3dde4adbf2b60ed2ab5926",
+    "filterResultSha256": [
+      "b0e04d27df552245e1a24482904d53eadac29c0c69a526e41df11a4a737657dd",
+      "71ad8cad6e515320fe03d346dcb03be2f546660cb5ee41a816538b4775565480",
+      "08122e925bd84d9c79e5160c34e1b68a08b9b0e478241dac40fd2901f86923d9",
+      "f17ca49e44969a7091ec18fb93fda474a0ef8822e4b0a7789d29df5b45051857",
+      "5dfe65af32daee90f3b1d4795a1aed91cd7f0aafc97273700c38e0dafbcc5803",
+      "f00308ba2533d4e157cdbdef19df702ac14d0bc6d4e1e3cd27759cecfc0a966c",
+      "f65227585864c89192777845f3d34f2abd048fa4be4c0e26303ad82d694aa806",
+      "d3bd0cc4677d17f12adafab18cea17ae6b3d20a4f3894798359670975a3dfef5",
+      "0ef0c1554f9181babec79b55bac8306e34a9350b02521a415670baf33c053887",
+      "1678e4ebe47cb2209ccf6d2efed192d5283a7985df110448dba154758d1c828f",
+      "eb9f72c501e4874ee68a55c86cf501bd7187d1088e741a8e6458257b0c184c11"
+    ],
+    "controllerResultSha256": "fd3e6a240aa961ccfa09187be94ed034b288b6548fdafde1ece8a562ecff7bb5"
+  }
+}

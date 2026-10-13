@@ -1,0 +1,47 @@
+{
+  "format": "e2e-proof-validation-v1",
+  "sourceRevision": "056b2116f1cf73f0a8d91edc8df9e8f1bc8f01b9",
+  "gates": [
+    {
+      "gateId": "oa-excel-entry-model-integration",
+      "sourceRevision": "056b2116f1cf73f0a8d91edc8df9e8f1bc8f01b9",
+      "commandOrRunUrl": "[\"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\",\"-NoLogo\",\"-NoProfile\",\"-NonInteractive\",\"-ExecutionPolicy\",\"Bypass\",\"-File\",\"{profile}\"]",
+      "status": "passed",
+      "artifactRefsSha256": "9bdb5542aaa21f204aca3e7a57107edc56b2d559e49fbb72eaab6cb40badb07d",
+      "attemptCount": 1,
+      "blockedReason": null
+    }
+  ],
+  "attempts": [
+    {
+      "round": 0,
+      "sourceRevision": "78e980e137c18eb54ce6e0f3f14c3e71a052a137",
+      "gates": [
+        {
+          "gateId": "oa-excel-entry-model-integration",
+          "sourceRevision": "78e980e137c18eb54ce6e0f3f14c3e71a052a137",
+          "commandOrRunUrl": "[\"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\",\"-NoLogo\",\"-NoProfile\",\"-NonInteractive\",\"-ExecutionPolicy\",\"Bypass\",\"-File\",\"{profile}\"]",
+          "status": "failed",
+          "artifactRefsSha256": "b514f57825262f13c91bc8d4858f80ccc8e9b06d93045317596af9e1964b331c",
+          "attemptCount": 1,
+          "blockedReason": null
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "sourceRevision": "056b2116f1cf73f0a8d91edc8df9e8f1bc8f01b9",
+      "gates": [
+        {
+          "gateId": "oa-excel-entry-model-integration",
+          "sourceRevision": "056b2116f1cf73f0a8d91edc8df9e8f1bc8f01b9",
+          "commandOrRunUrl": "[\"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\",\"-NoLogo\",\"-NoProfile\",\"-NonInteractive\",\"-ExecutionPolicy\",\"Bypass\",\"-File\",\"{profile}\"]",
+          "status": "passed",
+          "artifactRefsSha256": "9bdb5542aaa21f204aca3e7a57107edc56b2d559e49fbb72eaab6cb40badb07d",
+          "attemptCount": 1,
+          "blockedReason": null
+        }
+      ]
+    }
+  ]
+}

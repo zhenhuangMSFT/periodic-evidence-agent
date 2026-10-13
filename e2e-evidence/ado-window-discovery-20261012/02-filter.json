@@ -1,0 +1,35 @@
+{
+  "format": "e2e-proof-filter-v1",
+  "cohortId": "cohort-db594bdcbbef5ed8a3ed06de4eb222929417eb67ddb99db8925fe5ef94c98a1d",
+  "manifestSha256": "31ee66f3d216f8993d2019783c3a900ca9938e2f3a3dde4adbf2b60ed2ab5926",
+  "resultSha256": [
+    "b0e04d27df552245e1a24482904d53eadac29c0c69a526e41df11a4a737657dd",
+    "71ad8cad6e515320fe03d346dcb03be2f546660cb5ee41a816538b4775565480",
+    "08122e925bd84d9c79e5160c34e1b68a08b9b0e478241dac40fd2901f86923d9",
+    "f17ca49e44969a7091ec18fb93fda474a0ef8822e4b0a7789d29df5b45051857",
+    "5dfe65af32daee90f3b1d4795a1aed91cd7f0aafc97273700c38e0dafbcc5803",
+    "f00308ba2533d4e157cdbdef19df702ac14d0bc6d4e1e3cd27759cecfc0a966c",
+    "f65227585864c89192777845f3d34f2abd048fa4be4c0e26303ad82d694aa806",
+    "d3bd0cc4677d17f12adafab18cea17ae6b3d20a4f3894798359670975a3dfef5",
+    "0ef0c1554f9181babec79b55bac8306e34a9350b02521a415670baf33c053887",
+    "1678e4ebe47cb2209ccf6d2efed192d5283a7985df110448dba154758d1c828f",
+    "eb9f72c501e4874ee68a55c86cf501bd7187d1088e741a8e6458257b0c184c11"
+  ],
+  "batchCount": 11,
+  "memberCount": 73,
+  "accounting": {
+    "excluded-title": 36,
+    "reviewed": 37
+  },
+  "selected": {
+    "candidateSha256": "863c3d98bd5db1234c6fc67794b0b55d3036c92e225fd918addca2055c90876f",
+    "repository": "office-agent",
+    "sourceRevision": "5fc8c2a39abe4caae010d91e132e802f01afd460",
+    "layer": "integration",
+    "coverageStatus": "gap",
+    "blockers": 0,
+    "retainedEvidenceCount": 1,
+    "missingAssertionSha256": "a95c36ffc1cde8c138898dcf679d464b2e69cb560552029f225bd40d1ce69b71",
+    "rationaleSha256": "b95de8246136e007d528b4eace907b84f764d2b69e03ed925da2237cf7864a51"
+  }
+}

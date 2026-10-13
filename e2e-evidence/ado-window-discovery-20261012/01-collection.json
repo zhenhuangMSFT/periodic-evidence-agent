@@ -1,0 +1,42 @@
+{
+  "format": "e2e-proof-collection-v1",
+  "window": {
+    "start": "2026-10-12T00:00:00Z",
+    "endExclusive": "2026-10-13T00:00:00Z"
+  },
+  "sourceRuns": [
+    {
+      "runId": "ado-window-discovery-20261012",
+      "snapshotSha256": "8140a570c68f63705b161a6c469aeb68d92a2cb7d5d37ceea1694ef7cd67320c"
+    }
+  ],
+  "passes": [
+    {
+      "runId": "ado-window-discovery-20261012",
+      "pass": "ado:changed",
+      "state": "complete",
+      "evidenceCount": 71,
+      "examinedRecords": 71,
+      "readCalls": 3,
+      "provenance": "authenticated-source",
+      "execution": "delegated-source-adapter",
+      "identityVerified": true,
+      "coverage": "Current source enumeration, not a historical reconstruction"
+    },
+    {
+      "runId": "ado-window-discovery-20261012",
+      "pass": "ado:created",
+      "state": "complete",
+      "evidenceCount": 22,
+      "examinedRecords": 22,
+      "readCalls": 3,
+      "provenance": "authenticated-source",
+      "execution": "delegated-source-adapter",
+      "identityVerified": true,
+      "coverage": "Current source enumeration, not a historical reconstruction"
+    }
+  ],
+  "uniqueEvidence": 73,
+  "evidenceInventorySha256": "7a748759ef647c2c1d752517aa3e9eeb751766f98001469dbac1dee3bac4c73a",
+  "sourcesManifestSha256": "f31550b8ed8c28921bee310600204b7498a53cecd39c7c38bf231271ca41e395"
+}

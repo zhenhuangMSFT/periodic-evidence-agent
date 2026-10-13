@@ -1,0 +1,14 @@
+{
+  "format": "e2e-proof-coverage-selection-v1",
+  "mechanism": "complete-record-filter-consolidation",
+  "cohortId": "cohort-db594bdcbbef5ed8a3ed06de4eb222929417eb67ddb99db8925fe5ef94c98a1d",
+  "selectedCandidateSha256": "863c3d98bd5db1234c6fc67794b0b55d3036c92e225fd918addca2055c90876f",
+  "repository": "office-agent",
+  "inspectedSourceRevision": "5fc8c2a39abe4caae010d91e132e802f01afd460",
+  "layer": "integration",
+  "existingCoverageCount": 4,
+  "coverageStatus": "gap",
+  "blockerCount": 0,
+  "priority": 95,
+  "confidence": 0.98
+}
