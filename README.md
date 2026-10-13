@@ -1014,6 +1014,26 @@ current revision. Exhausted repair rounds, missing or stale gate results, and
 post-validation source changes remain blocked locally; failed drafts are not
 published.
 
+### Sanitized E2E proof bundles
+
+After a real FILTER-to-proposer run reaches a terminal
+`draft-pr-validated` worker result, export a sanitized proof bundle into the
+tracked `e2e-evidence` directory. The private request binds the original source
+ledger manifest, FILTER manifest/results and complete controller output:
+
+```powershell
+npm run pilot -- e2e-proof-export --file .\e2e-proof-request.local.json --output .\e2e-evidence\RUN_ID --config .\pilot.local.json
+npm run pilot -- e2e-proof-check --file .\e2e-proof-request.local.json --bundle .\e2e-evidence\RUN_ID --config .\pilot.local.json
+```
+
+The exporter reopens the source ledgers read-only, reconstructs the full FILTER
+cohort, verifies the selected candidate against the terminal worker result and
+requires every validation gate to pass at the Draft PR head revision. Committed
+files contain aggregate counts, source/result hashes, skill execution, safe
+validation commands, Draft PR metadata and explicit limitations. Raw source
+bodies, identities, captures, local paths, private packets and logs remain in
+ignored approved storage.
+
 ## Public package boundary
 
 This public repository contains reusable controller code, a lockfile, synthetic

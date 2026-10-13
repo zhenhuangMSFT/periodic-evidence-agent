@@ -28,6 +28,7 @@ import { replayRecordedEvidence, replayRecordedReview } from './role-replay.js';
 import { continueRoleValidation } from './role-continuation.js';
 import { prepareLocalValidationDiagnostic, dispatchLocalValidationDiagnostic } from './local-diagnostic.js';
 import { prepareLocalAuthoringSuccessor, dispatchLocalAuthoringSuccessor } from './local-authoring-successor.js';
+import { exportE2eProof, checkE2eProof } from './e2e-proof.js';
 
 const invocationArgs = process.argv.slice(2);
 const roleInvocation = invocationArgs[0] === 'agent';
@@ -110,6 +111,8 @@ const help = `Local evidence pilot (live operations disabled by default)
   node src\\cli.js filter-batch-check --file batch-result.json --manifest private-batches.json
   node src\\cli.js filter-consolidate --file result-paths.json --manifest private-batches.json --output consolidation.json
   node src\\cli.js filter-execution-check --file result-paths.json --manifest private-batches.json --ledger execution.sqlite
+  node src\\cli.js e2e-proof-export --file private-proof-request.json --output e2e-evidence\\RUN_ID
+  node src\\cli.js e2e-proof-check --file private-proof-request.json --bundle e2e-evidence\\RUN_ID
   node src\\cli.js stage2-proposal-check --file private-proposal.json --handoff private-handoff.json
   node src\\cli.js app-review --run ID --production --file review.json
   node src\\cli.js app-plan-improvement --run ID --production --file improvement-plan.json
@@ -195,7 +198,8 @@ try {
     }
     if (!appAction && !['dry-run', 'icm-replay', 'stage2-handoff', 'stage2-proposal-check',
       'filter-title-index', 'filter-title-materialize', 'filter-batches', 'filter-batch-size',
-      'filter-batch-check', 'filter-consolidate', 'filter-execution-check'].includes(action))
+      'filter-batch-check', 'filter-consolidate', 'filter-execution-check',
+      'e2e-proof-export', 'e2e-proof-check'].includes(action))
       ledger = new Ledger(config.stateDirectory);
     if (appAction && !['app-begin', 'app-runs', 'app-workiq-continue'].includes(action)) {
       requireThat(option('--run'), 'App commands require --run');
@@ -261,6 +265,12 @@ try {
         } finally { db.close(); }
         break;
       }
+      case 'e2e-proof-export':
+        requireThat(option('--output'), 'E2E proof export requires --output');
+        result = exportE2eProof(config, input(), option('--output')); break;
+      case 'e2e-proof-check':
+        requireThat(option('--bundle'), 'E2E proof check requires --bundle');
+        result = checkE2eProof(config, input(), option('--bundle')); break;
       case 'filter-title-index':
         requireThat(option('--output'), 'Title index requires an explicit private output path');
         result = prepareTitleIndex(config, input(), option('--output')); break;

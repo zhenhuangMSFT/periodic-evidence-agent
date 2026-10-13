@@ -1107,6 +1107,38 @@
         }
       ]
     },
+    "e2eProofRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "runId", "collection", "filter", "controller"],
+      "properties": {
+        "format": { "const": "e2e-proof-request-v1" },
+        "runId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "collection": {
+          "type": "object", "additionalProperties": false,
+          "required": ["sourcesPath"],
+          "properties": { "sourcesPath": { "$ref": "#/$defs/text" } }
+        },
+        "filter": {
+          "type": "object", "additionalProperties": false,
+          "required": ["manifestPath", "resultPaths"],
+          "properties": {
+            "manifestPath": { "$ref": "#/$defs/text" },
+            "resultPaths": {
+              "type": "array", "minItems": 1,
+              "items": { "$ref": "#/$defs/text" }
+            }
+          }
+        },
+        "controller": {
+          "type": "object", "additionalProperties": false,
+          "required": ["resultPath"],
+          "properties": { "resultPath": { "$ref": "#/$defs/text" } }
+        }
+      }
+    },
     "examples": {
       "type": "object", "additionalProperties": false,
       "required": ["recordType", "schemaVersion", "synthetic", "notice", "scopes", "repoIds", "records", "scenarios"],
