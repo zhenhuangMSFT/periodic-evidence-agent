@@ -30,11 +30,12 @@ function checkedWorkspace(config, ledger, job) {
         'Workspace path contains a link or a non-directory');
     if (dirname(current) === current) break;
   }
+  const physicalWorkspace = existsSync(workspace) ? realpathSync.native(workspace) : workspace;
   for (const repo of config.repositories) {
     if (!repo.referenceCheckout) continue;
     const reference = existsSync(repo.referenceCheckout)
-      ? realpathSync(repo.referenceCheckout) : resolve(repo.referenceCheckout);
-    retain(!inside(workspace, reference) && !inside(reference, workspace),
+      ? realpathSync.native(repo.referenceCheckout) : resolve(repo.referenceCheckout);
+    retain(!inside(physicalWorkspace, reference) && !inside(reference, physicalWorkspace),
       'Workspace overlaps a primary checkout');
   }
   return workspace;
@@ -80,8 +81,8 @@ async function sourceBranch(workspace) {
   }
 }
 async function cleanSource(workspace, revision, baseRef) {
-  retain(resolve(await git(workspace, ['rev-parse', '--show-toplevel'])) ===
-    resolve(workspace), 'Workspace is not the root of an independent checkout');
+  retain(realpathSync.native(await git(workspace, ['rev-parse', '--show-toplevel'])) ===
+    realpathSync.native(workspace), 'Workspace is not the root of an independent checkout');
   retain(await git(workspace, ['rev-parse', 'HEAD']) === revision, 'Workspace HEAD differs from the delivered revision');
   retain(!(await git(workspace, ['status', '--porcelain', '--untracked-files=all'])),
     'Workspace has uncommitted or untracked changes');
@@ -164,8 +165,8 @@ export async function cleanupWorkspace(config, ledger, id, { execute = false } =
     ].flatMap(validation => validation.artifactRefs);
     retain(artifacts.length > 0 && artifacts.every(path => isAbsolute(path) &&
       existsSync(path) && lstatSync(path).isFile() &&
-      inside(realpathSync(config.stateDirectory), realpathSync(path)) &&
-      !inside(workspace, realpathSync(path))),
+      inside(realpathSync.native(config.stateDirectory), realpathSync.native(path)) &&
+      !inside(realpathSync.native(workspace), realpathSync.native(path))),
     'Validation evidence is missing or is not preserved outside the workspace');
     await cleanSource(workspace, result.sourceRevision, repo.baseRef);
     const remoteHead = await remoteRevision(config, repo, workspace, sourceRef,

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -1524,6 +1524,36 @@ test('workspace GC previews delivery, reports deletion failure and safely retrie
   assert.equal(ledger.workspaceCleanup(job.id).state, 'removed');
   assert.equal((await cleanupWorkspace(config, ledger, job.id, { execute: true })).state, 'skipped');
 });
+test('workspace GC handles Windows short paths without bypassing primary-checkout protection',
+  { skip: process.platform !== 'win32' }, async t => {
+    const { config, job, repo, root, isolated, artifact } = await deliveredWorkspace(t);
+    const shortRoot = (await command('powershell', ['-NoProfile', '-Command',
+      '$fs = New-Object -ComObject Scripting.FileSystemObject; $fs.GetFolder($env:PILOT_TEST_ROOT).ShortPath'],
+    root, 120000, { ...process.env, PILOT_TEST_ROOT: root })).stdout.trim();
+    if (shortRoot === realpathSync.native(root)) {
+      t.skip('Windows short-path aliases are unavailable on this volume');
+      return;
+    }
+    config.stateDirectory = join(shortRoot, 'state');
+    const workspace = join(config.stateDirectory, 'workspaces', job.session_id);
+    const ledger = new Ledger(config.stateDirectory);
+    try {
+      ledger.db.prepare('UPDATE jobs SET workspace=? WHERE id=?').run(workspace, job.id);
+      const reference = repo.referenceCheckout;
+      repo.referenceCheckout = realpathSync.native(workspace);
+      const retained = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+      assert.equal(retained.state, 'skipped', json(retained));
+      assert.match(retained.reason, /overlaps a primary checkout/);
+      assert.equal(existsSync(workspace), true);
+      repo.referenceCheckout = reference;
+      const preview = await cleanupWorkspace(config, ledger, job.id);
+      assert.equal(preview.state, 'eligible', json(preview));
+      const removed = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+      assert.equal(removed.state, 'removed', json(removed));
+      assert.equal(existsSync(workspace), false);
+      assert.ok([reference, artifact].every(existsSync));
+    } finally { ledger.close(); }
+  });
 test('workspace GC retains unfinished tasks, dirty source, ignored files, local branches and missing evidence', async t => {
   const { config, ledger, job, isolated, artifact } = await deliveredWorkspace(t);
   const check = async pattern => {
