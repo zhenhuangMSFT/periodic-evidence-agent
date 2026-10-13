@@ -876,7 +876,11 @@ policy failures are never auto-approved. A failed revision remains immutable val
 evidence; when `limits.maxValidationRepairRounds` permits, the controller gives
 bounded diagnostic tails to a new repository-skill repair round, commits the
 repair as a new revision and validates again. This is not a retry of the same
-validation operation. The final committed revision is independently validated
+validation operation. The repair budget defaults to 10 rounds and cannot exceed
+10. Controller-owned validation profiles must emit
+`PILOT_VALIDATION_PROFILE_ERROR:` for invalid test selection or other profile
+configuration failures; those failures block publication and never consume a
+repository-skill repair round. The final committed revision is independently validated
 before push and Draft PR creation. Exhausted failed rounds remain blocked
 locally; they cannot create a failed Draft PR. Merge is always
 prohibited. Offline CI injects external model/PR boundaries and performs no

@@ -16,7 +16,7 @@
   "reviewMethod": "agent-evidence-review",
   "stage2": { "skillDirectory": null },
   "workerIntent": "defect-fix",
-  "limits": { "maxItems": null, "maxCalls": null, "maxWorkers": 1, "maxAssignments": 2, "workerMinutes": null, "workerMaxToolCalls": null, "maxAiCreditsPerSession": null, "maxFileBytes": 262144, "maxValidationRepairRounds": 2, "maxValidationInfrastructureRetries": 1 },
+  "limits": { "maxItems": null, "maxCalls": null, "maxWorkers": 1, "maxAssignments": 2, "workerMinutes": null, "workerMaxToolCalls": null, "maxAiCreditsPerSession": null, "maxFileBytes": 262144, "maxValidationRepairRounds": 10, "maxValidationInfrastructureRetries": 1 },
   "dryRun": {
     "collectionOnly": true,
     "window": { "start": "2026-10-08T00:00:00Z", "end": "2026-10-09T00:00:00Z" },

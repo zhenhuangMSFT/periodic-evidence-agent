@@ -1549,10 +1549,13 @@ function validationError(error, legacyRunner = false) {
       ...(error.nativeGitExitCode !== undefined ? { nativeGitExitCode: error.nativeGitExitCode } : {})
     } };
   const unavailable = typeof error.code === 'string';
+  const profileError = [error.stdout, error.stderr].some(value =>
+    typeof value === 'string' && value.includes('PILOT_VALIDATION_PROFILE_ERROR:'));
   return {
-    status: error.killed || unavailable ? 'blocked' : 'failed',
+    status: error.killed || unavailable || profileError ? 'blocked' : 'failed',
     blockedReason: error.killed ? 'runner-timeout' :
-      unavailable ? 'runner-unavailable' : null,
+      unavailable ? 'runner-unavailable' :
+      profileError ? 'validation-profile-error' : null,
     output: {
       stdout: error.stdout ?? '', stderr: error.stderr ?? '',
       exitCode: error.code ?? null, timeout: Boolean(error.killed)
@@ -1770,7 +1773,8 @@ async function runStagedGate(config, ledger, job, repo, gate, revision, prepared
       preparedReceipt: receipt.receiptPath
     });
     if (status !== 'blocked' || attempt >= maxRetries ||
-      ['validation-profile-changed', 'prepared-cache-corrupt', 'blocked-auth'].includes(blockedReason)) break;
+      ['validation-profile-changed', 'validation-profile-error',
+        'prepared-cache-corrupt', 'blocked-auth'].includes(blockedReason)) break;
   }
   return {
     gateId: gate.id, sourceRevision: revision, commandOrRunUrl, status,
@@ -2042,7 +2046,8 @@ export async function runValidation(config, ledger, job, repo, revision, execute
         artifact, revision, attempt, blockedReason, owner: repo.owner
       });
       if (status !== 'blocked' || attempt >= maxRetries ||
-        ['validation-profile-changed', 'validation-cleanup-failed', 'blocked-auth'].includes(blockedReason)) break;
+        ['validation-profile-changed', 'validation-profile-error',
+          'validation-cleanup-failed', 'blocked-auth'].includes(blockedReason)) break;
     }
     results.push({
       gateId: gate.id, sourceRevision: revision, commandOrRunUrl, status,
@@ -2370,7 +2375,7 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
     let outcome;
     let authoring = { round: 0, validationFeedback: [] };
     let finalValidation = [];
-    const maxRepairRounds = config.limits.maxValidationRepairRounds ?? 0;
+    const maxRepairRounds = config.limits.maxValidationRepairRounds ?? 10;
     while (true) {
       if (continuation) {
         proposal = structuredClone(continuation.proposal);

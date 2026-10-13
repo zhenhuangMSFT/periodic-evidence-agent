@@ -174,7 +174,8 @@ async function stagedValidationFixture(t, {
     failDependencyAuthentication: false, mutateDuringAuthentication: false,
     invalidAuthenticationEvidence: false, failTestWithAuthenticationText: false,
     authenticationPreflight: 'ready', authenticationCheckDelayMs: 0,
-    dependencyVersion: '2.0.0'
+    dependencyVersion: '2.0.0',
+    failTestWithProfileError: false
   };
   const execute = async (executable, args, cwd, timeout, env) => {
     const stage = env.PILOT_VALIDATION_STAGE;
@@ -286,6 +287,11 @@ async function stagedValidationFixture(t, {
       throw Object.assign(new Error('test failed'), {
         code: 1, stdout: '', stderr: 'expected HTTP 403 in application behavior'
       });
+    if (stage === 'test' && behavior.failTestWithProfileError)
+      throw Object.assign(new Error('profile failed'), {
+        code: 1, stdout: '',
+        stderr: 'PILOT_VALIDATION_PROFILE_ERROR: invalid package-relative selector'
+      });
     return { stdout: `${stage} passed\n`, stderr: '' };
   };
   const commit = async (path, content, message) => {
@@ -374,6 +380,28 @@ test('portable example uses a fixed UTC fixture window and leaves live permissio
   assert.ok(config.repositories.every(r => !r.projectId && !r.referenceCheckout && !r.routingApproved));
   assert.ok(config.repositories.every(r => proposerExecutorFlight(r) === 'local'));
   assert.match(config.identity.designatedUser, /@example\.invalid$/);
+  assert.equal(config.limits.maxValidationRepairRounds, 10);
+});
+test('validation repair budget defaults to ten and rejects larger values', t => {
+  const root = mkdtempSync(join(tmpdir(), 'repair-budget-config-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const config = JSON.parse(readFileSync('pilot.example.json'));
+  delete config.limits.maxValidationRepairRounds;
+  const configPath = join(root, 'pilot.json');
+  writeFileSync(configPath, JSON.stringify(config));
+  assert.equal(configAt(configPath).limits.maxValidationRepairRounds, 10);
+  config.limits.maxValidationRepairRounds = 11;
+  writeFileSync(configPath, JSON.stringify(config));
+  assert.throws(() => configAt(configPath), /must not exceed 10/);
+});
+test('OfficeAgent Excel validation profile converts selectors to package-relative paths', () => {
+  const profile = readFileSync('scripts/validation/office-agent-excel-entry-model.ps1', 'utf8');
+  assert.match(profile, /git diff --name-only HEAD\^ HEAD -- 'agents\/office-agent\/tests\/integration/);
+  assert.match(profile, /\^agents\/office-agent\/\(tests\/integration\/\.\+\\\.test\\\.ts\)\$/);
+  assert.match(profile, /Join-Path 'agents\\office-agent' \$test/);
+  assert.match(profile, /PILOT_VALIDATION_PROFILE_ERROR:/);
+  assert.doesNotMatch(profile,
+    /--runTestsByPath\s+agents\/office-agent\/tests\/integration/);
 });
 test('executor flights validate exact backend choices and preserve omitted legacy configuration', t => {
   const { root } = setup(t);
@@ -808,6 +836,25 @@ test('failed validation is terminal evidence, not a success-shaped result', asyn
   assert.equal(result[0].status, 'failed');
   const artifact = JSON.parse(readFileSync(result[0].artifactRefs[0]));
   assert.equal(artifact.output.exitCode, 9);
+});
+test('validation profile errors block without entering source repair retries', async t => {
+  const { config, ledger, job, repo } = await fixture(t), isolated = await provision(config, job, repo);
+  config.limits.maxValidationInfrastructureRetries = 2;
+  repo.validationGates = [{ id: 'profile-error', approved: true, isolationVerified: true,
+    executable: process.execPath, args: [], timeoutMs: 10000 }];
+  let attempts = 0;
+  const result = await runValidation(config, ledger,
+    { ...job, workspace: isolated.workspace }, repo, isolated.baseRevision,
+    async () => {
+      attempts++;
+      throw Object.assign(new Error('invalid profile selection'), {
+        code: 1, stdout: '', stderr: 'PILOT_VALIDATION_PROFILE_ERROR: no authored test selected'
+      });
+    });
+  assert.equal(result[0].status, 'blocked');
+  assert.equal(result[0].blockedReason, 'validation-profile-error');
+  assert.equal(result[0].attemptCount, 1);
+  assert.equal(attempts, 1);
 });
 test('source mutation during validation retries in a clean checkout then blocks', async t => {
   const { config, ledger, job, repo } = await fixture(t), isolated = await provision(config, job, repo);
@@ -1380,6 +1427,18 @@ test('auth-like test output remains a test failure rather than an auth blocker',
   assert.equal(result[0].status, 'failed');
   assert.equal(result[0].blockedReason, null);
   assert.equal(result[0].attemptCount, 1);
+});
+test('staged validation profile errors block without retrying or entering source repair', async t => {
+  const ctx = await stagedValidationFixture(t);
+  const prepared = await prepareValidation(ctx.config, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute);
+  ctx.behavior.failTestWithProfileError = true;
+  const result = await runValidation(ctx.config, ctx.ledger, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute, rmSync, prepared);
+  assert.equal(result[0].status, 'blocked');
+  assert.equal(result[0].blockedReason, 'validation-profile-error');
+  assert.equal(result[0].attemptCount, 1);
+  assert.equal(ctx.calls.filter(stage => stage === 'test').length, 1);
 });
 test('authentication cannot modify the exact-revision source workspace', async t => {
   const ctx = await stagedValidationFixture(t, { authentication: true });

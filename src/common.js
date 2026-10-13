@@ -114,9 +114,9 @@ export function configAt(path) {
   }
   requireThat(Array.isArray(config.repositories), 'repositories must be an array');
   config.limits.maxValidationRepairRounds =
-    nonNegative(config.limits.maxValidationRepairRounds ?? 0, 'maxValidationRepairRounds');
-  requireThat(config.limits.maxValidationRepairRounds <= 5,
-    'maxValidationRepairRounds must not exceed 5');
+    nonNegative(config.limits.maxValidationRepairRounds ?? 10, 'maxValidationRepairRounds');
+  requireThat(config.limits.maxValidationRepairRounds <= 10,
+    'maxValidationRepairRounds must not exceed 10');
   config.limits.maxValidationInfrastructureRetries =
     nonNegative(config.limits.maxValidationInfrastructureRetries ?? 0,
       'maxValidationInfrastructureRetries');
