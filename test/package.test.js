@@ -33,11 +33,12 @@ test('package check rejects a private file in the index even if gitignore covers
   assert.ok(report.findings.some(f => f.path === 'pilot.local.json' && f.rule === 'runtime/private artifact path'));
 });
 
-test('package check accepts public Agency contracts and verifier byte-preservation attributes', t => {
+test('package check accepts public execution guides, Agency contracts and verifier byte-preservation attributes', t => {
   const { root, git, inspect } = fixture(t);
+  writeFileSync(join(root, 'EXECUTION-GUIDE.md'), 'Generic gated execution guide\n');
   writeFileSync(join(root, 'AGENCY-EXECUTOR.md'), 'Generic offline executor contract\n');
   writeFileSync(join(root, '.gitattributes'), 'src/filter-capture-verifier.js -text\n');
-  git(['add', 'AGENCY-EXECUTOR.md', '.gitattributes']);
+  git(['add', 'EXECUTION-GUIDE.md', 'AGENCY-EXECUTOR.md', '.gitattributes']);
   assert.equal(inspect().status, 0);
 });
 

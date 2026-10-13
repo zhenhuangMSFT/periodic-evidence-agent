@@ -20,6 +20,10 @@ contract. [Held Stage2 handoffs](APP-NATIVE.md#held-stage2-coverage-handoff) req
 the installed coverage-analysis skill and pinned reference, read source ledgers
 read-only, and cannot authorize product dispatch.
 
+For the gated setup-to-draft-PR procedure, see the
+[end-to-end execution guide](EXECUTION-GUIDE.md). It separates offline setup
+from live authentication, complete-cohort review and authorized execution.
+
 ## Account-free quick start
 
 Prerequisites: **Node.js 24 LTS**, npm and Git on PATH. Windows PowerShell is
