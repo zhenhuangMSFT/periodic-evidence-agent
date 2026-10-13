@@ -40,7 +40,8 @@ function failedOutcome(result) {
   if (!result || typeof result !== 'object') return false;
   return Boolean(result.error) ||
     result.state === 'failed' ||
-    ['blocked', 'blocked-auth', 'partial', 'partial-or-blocked', 'draft-pr-validation-failed'].includes(result.state) ||
+    ['action-required-auth', 'blocked', 'blocked-auth', 'partial', 'partial-or-blocked',
+      'draft-pr-validation-failed'].includes(result.state) ||
     ['blocked', 'draft-pr-validation-failed'].includes(result.outcome) ||
     ['collection', 'reviews', 'workers', 'result', 'workspaces'].some(key => failedOutcome(result[key]));
 }

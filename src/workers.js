@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { availableParallelism } from 'node:os';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
+import { fileURLToPath } from 'node:url';
 import {
   readFileSync, writeFileSync, mkdirSync, existsSync, statSync, lstatSync,
   readdirSync, readlinkSync, symlinkSync, copyFileSync, rmSync
@@ -18,6 +19,9 @@ import { outputPathFingerprint } from './output-fingerprint.js';
 import { adoAccessToken, adoGitEnvironment } from './ado-auth.js';
 import { agencyTaskId, bindAgencyAssignment, requireAgencyQualification, reserveAgencyRequest,
   recordAgencySubmission, reconcileAgencyResult, inspectAgencyRequest, activeWorkerCount } from './agency-executor.js';
+import {
+  parseValidationAuthPreflight, validationAuthAction
+} from './validation-auth.js';
 
 const exec = promisify(execFile);
 const reviewedHandoffPermit = Symbol('reviewed-handoff-controller');
@@ -151,11 +155,7 @@ export async function provision(config, job, repo, qualification = null, depende
   const relativeToReference = relative(resolve(repo.referenceCheckout), workspace);
   requireThat(relativeToReference.startsWith('..') || isAbsolute(relativeToReference), 'Workspace must not be inside the primary checkout');
   requireThat(!existsSync(workspace), 'Workspace already exists; reconcile instead of cloning twice', 'blocked-reconciliation');
-  const baseRevision = qualification?.baseRevision ??
-    await git(repo.referenceCheckout, ['rev-parse', '--verify', `${repo.baseRef}^{commit}`]);
-  requireThat(/^[a-f0-9]{40,64}$/.test(baseRevision), 'Invalid base revision');
-  if (qualification?.baseRevision)
-    await git(repo.referenceCheckout, ['cat-file', '-e', `${qualification.baseRevision}^{commit}`]);
+  const baseRevision = await resolvedBaseRevision(repo, qualification);
   await git(root, ['clone', '--no-hardlinks', '--no-checkout', '--', repo.referenceCheckout, workspace]);
   await git(workspace, ['remote', 'set-url', 'origin', repo.remote]);
   if (qualification?.qualificationSource === 'trusted-remote')
@@ -176,7 +176,16 @@ function removeValidationPath(path, options) {
   return rmSync(path, { ...options, maxRetries: 10, retryDelay: 250 });
 }
 const preparationPromises = new Map();
+const authenticationPreflightPromises = new Map();
 const validationLocks = new Map();
+async function resolvedBaseRevision(repo, qualification = null) {
+  const revision = qualification?.baseRevision ??
+    await git(repo.referenceCheckout, ['rev-parse', '--verify', `${repo.baseRef}^{commit}`]);
+  requireThat(/^[a-f0-9]{40,64}$/.test(revision), 'Invalid base revision');
+  if (qualification?.baseRevision)
+    await git(repo.referenceCheckout, ['cat-file', '-e', `${revision}^{commit}`]);
+  return revision;
+}
 function validationPlan(profile) {
   if (!profile) return null;
   const text = profile.bytes.toString('utf8');
@@ -188,7 +197,16 @@ function validationPlan(profile) {
   const paths = value => Array.isArray(value) && value.length > 0 &&
     value.every(path => typeof path === 'string' && path && !isAbsolute(path) &&
       !path.includes('..') && !path.includes(':'));
-  if (plan?.version !== 2 ||
+  const authentication = plan?.authentication;
+  const validAuthentication = plan?.version === 2 && authentication === undefined ||
+    plan?.version === 3 && authentication?.type === 'azure-artifacts-npm' &&
+      authentication.provider === 'artifacts-npm-credprovider' &&
+      /^\d+\.\d+\.\d+$/.test(authentication.providerVersion ?? '') &&
+      Array.isArray(authentication.feeds) && authentication.feeds.length > 0 &&
+      authentication.feeds.every(feed =>
+        /^https:\/\/[^/]+\/_packaging\/[^/]+\/npm\/registry\/$/.test(feed?.registry ?? '') &&
+        (feed.scope === null || /^[a-z0-9][a-z0-9-]*$/.test(feed.scope ?? '')));
+  if (![2, 3].includes(plan?.version) || !validAuthentication ||
     json(plan.stages) !== json(['dependencies', 'compile', 'policy', 'test']) ||
     !paths(plan.testOnlyPrefixes) || !paths(plan.lockfilePaths) ||
     !paths(plan.buildConfigPaths) || !paths(plan.dependencySnapshotPaths) ||
@@ -247,6 +265,24 @@ function stageTelemetry(id, startedAt, cache, output = null) {
     subphases: output ? yarnSubphases(output) : []
   };
 }
+function authenticationFailureText(error) {
+  return [
+    error?.message, error?.stdout, error?.stderr,
+    error?.originalMessage
+  ].filter(value => typeof value === 'string').join('\n');
+}
+function isAuthenticationFailure(error) {
+  return /PILOT_AUTH_|No authentication configured|Invalid authentication|anonymous user|authentication required|credentials?.*(?:invalid|missing|refresh)|\b(?:401|403)\b/i
+    .test(authenticationFailureText(error));
+}
+function blockedAuthentication(error) {
+  const blocked = new PilotError('blocked-auth',
+    'Azure Artifacts credentials are unavailable or invalid; run the approved validation authentication setup and retry.');
+  blocked.stdout = '';
+  blocked.stderr = blocked.message;
+  blocked.stageTelemetry = error.stageTelemetry;
+  return blocked;
+}
 async function runProfileStage(gate, profile, stage, workspace, execute = command) {
   const profileRoot = join(dirname(workspace), 'validation-profiles');
   mkdirSync(profileRoot, { recursive: true });
@@ -266,6 +302,9 @@ async function runProfileStage(gate, profile, stage, workspace, execute = comman
       stdout: error.stdout ?? '', stderr: error.stderr ?? '',
       exitCode: error.code ?? null, timeout: Boolean(error.killed)
     });
+    if (stage === 'authentication' ||
+      stage === 'dependencies' && isAuthenticationFailure(error))
+      throw blockedAuthentication(error);
     throw error;
   } finally {
     removeValidationPath(privateProfile, { force: true });
@@ -279,6 +318,19 @@ function parseToolchainFingerprint(output) {
     const value = JSON.parse(line.slice('PILOT_VALIDATION_FINGERPRINT:'.length));
     return value && ['node', 'corepack', 'yarn', 'platform', 'architecture']
       .every(key => typeof value[key] === 'string' && value[key]) ? value : null;
+  } catch { return null; }
+}
+function parseAuthenticationFingerprint(output) {
+  const line = String(output?.stdout ?? '').split(/\r?\n/)
+    .find(value => value.startsWith('PILOT_VALIDATION_AUTH:'));
+  if (!line) return null;
+  try {
+    const value = JSON.parse(line.slice('PILOT_VALIDATION_AUTH:'.length));
+    return value &&
+      value.provider === 'artifacts-npm-credprovider' &&
+      /^\d+\.\d+\.\d+$/.test(value.providerVersion ?? '') &&
+      Number.isInteger(value.feedCount) && value.feedCount > 0 &&
+      value.tokenRecorded === false ? value : null;
   } catch { return null; }
 }
 function profileForGate(gate) {
@@ -443,34 +495,182 @@ function preparedValidationRoot(config, type, gateId, key) {
   return join(config.stateDirectory, 'pv', type,
     hash(gateId).slice(0, 12), key.slice(0, 24));
 }
-async function prepareDependencySnapshot(config, job, gate, revision, profile, plan,
-  fingerprintRun, toolchain, lockfileSha256, execute, verifyOutputs = true) {
+function dependencySnapshotContext(config, gate, profile, plan, toolchain,
+  lockfileSha256) {
   const inputs = {
     gateId: gate.id, lockfileSha256, profileSha256: profile.sha256,
     toolchain, toolchainSha256: hash(json(toolchain))
   };
+  if (plan.authentication) inputs.authentication = plan.authentication;
   const key = hash(json(inputs));
   const root = preparedValidationRoot(config, 'd', gate.id, key);
-  const workspace = join(root, 'w');
-  const receiptPath = join(root, 'r.json');
-  const load = async () => {
-    try {
-      if (!existsSync(receiptPath)) return null;
-      const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
-      if (!validReceiptIntegrity(receipt) || receipt.type !== 'dependencies' ||
-        json(receipt.inputs) !== json(inputs) ||
-        !Array.isArray(receipt.outputs?.paths)) return null;
-      if (verifyOutputs && (!existsSync(workspace) ||
-        await git(workspace, ['status', '--porcelain']) ||
-        await outputFingerprint(workspace, receipt.outputs.paths) !==
-          receipt.outputs.sha256)) return null;
-      return {
-        ...receipt, receiptPath, workspace, profile, plan, cache: 'hit',
-        outputsVerified: verifyOutputs
-      };
-    } catch { return null; }
+  return {
+    inputs, key, root, workspace: join(root, 'w'),
+    receiptPath: join(root, 'r.json')
   };
-  const cached = await load();
+}
+async function prepareAuthenticationWorkspace(config, repo, gate, profile,
+  plan, revision) {
+  const key = hash(json({
+    gateId: gate.id,
+    profileSha256: profile.sha256,
+    authentication: plan.authentication,
+    revision
+  }));
+  const root = preparedValidationRoot(config, 'a', gate.id, key);
+  const workspace = join(root, 'w');
+  if (existsSync(root))
+    removeValidationPath(root, { recursive: true, force: true });
+  mkdirSync(workspace, { recursive: true });
+  const yarnConfig = await git(
+    repo.referenceCheckout, ['show', `${revision}:.yarnrc.yml`]);
+  requireThat(yarnConfig,
+    `Gate ${gate.id} exact-revision authentication configuration is unavailable`,
+    'blocked-validation');
+  writeFileSync(join(workspace, '.yarnrc.yml'), `${yarnConfig}\n`,
+    { mode: 0o600 });
+  return { root, workspace };
+}
+async function loadDependencySnapshot(context, profile, plan, verifyOutputs) {
+  try {
+    const { inputs, workspace, receiptPath } = context;
+    if (!existsSync(receiptPath)) return null;
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+    if (!validReceiptIntegrity(receipt) || receipt.type !== 'dependencies' ||
+      json(receipt.inputs) !== json(inputs) ||
+      !Array.isArray(receipt.outputs?.paths)) return null;
+    if (verifyOutputs && (!existsSync(workspace) ||
+      await git(workspace, ['status', '--porcelain']) ||
+      await outputFingerprint(workspace, receipt.outputs.paths) !==
+        receipt.outputs.sha256)) return null;
+    return {
+      ...receipt, receiptPath, workspace, profile, plan, cache: 'hit',
+      outputsVerified: verifyOutputs
+    };
+  } catch { return null; }
+}
+function compileSnapshotContext(config, gate, profile, toolchain, revision,
+  lockfileSha256, buildConfigSha256, dependency) {
+  const inputs = {
+    gateId: gate.id, sourceRevision: revision, lockfileSha256, buildConfigSha256,
+    profileSha256: profile.sha256, toolchain,
+    toolchainSha256: hash(json(toolchain)),
+    dependencyKey: dependency.key,
+    dependencyIntegrity: dependency.integrity,
+    preparedSnapshotVersion: 3
+  };
+  const key = hash(json(inputs));
+  const root = preparedValidationRoot(config, 'c', gate.id, key);
+  return {
+    inputs, key, root, workspace: join(root, 'w'),
+    receiptPath: join(root, 'r.json')
+  };
+}
+async function loadCompileSnapshot(context, revision, profile, plan, dependency,
+  verifyOutputs) {
+  try {
+    const { inputs, workspace, receiptPath } = context;
+    if (!existsSync(receiptPath) || !existsSync(workspace)) return null;
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+    if (!validReceiptIntegrity(receipt) || receipt.type !== 'compile' ||
+      json(receipt.inputs) !== json(inputs) ||
+      !Array.isArray(receipt.outputs?.paths)) return null;
+    if (verifyOutputs && (
+      await git(workspace, ['rev-parse', 'HEAD']) !== revision ||
+      await git(workspace, ['status', '--porcelain']) ||
+      await outputFingerprint(workspace, receipt.outputs.paths) !==
+        receipt.outputs.sha256)) return null;
+    return {
+      ...receipt, receiptPath, workspace, profile, plan, cache: 'hit',
+      dependencyCache: dependency.cache,
+      dependencyReceiptPath: dependency.receiptPath
+    };
+  } catch { return null; }
+}
+export async function preflightValidationAuthentication(config, repo, revision,
+  execute = command) {
+  const actions = [];
+  for (const gate of repo.validationGates) {
+    const profile = profileForGate(gate);
+    const plan = validationPlan(profile);
+    if (!plan?.authentication) continue;
+    const promiseKey = `authentication:${hash(json({
+      gateId: gate.id,
+      profileSha256: profile.sha256,
+      authentication: plan.authentication,
+      revision
+    }))}`;
+    let checking = authenticationPreflightPromises.get(promiseKey);
+    if (!checking) {
+      checking = (async () => {
+        const fingerprintRun = await runProfileStage(
+          gate, profile, 'fingerprint', repo.referenceCheckout, execute);
+        const toolchain = parseToolchainFingerprint(fingerprintRun.output);
+        const lockfileSha256 = await revisionPathFingerprint(
+          repo.referenceCheckout, revision, plan.lockfilePaths);
+        requireThat(toolchain && lockfileSha256,
+          `Gate ${gate.id} authentication preflight fingerprints are incomplete`,
+          'blocked-validation');
+        const context = dependencySnapshotContext(
+          config, gate, profile, plan, toolchain, lockfileSha256);
+        const dependency = await loadDependencySnapshot(
+          context, profile, plan, false);
+        if (dependency) {
+          if (existsSync(dependency.workspace)) return null;
+          const buildConfigSha256 = await revisionPathFingerprint(
+            repo.referenceCheckout, revision, plan.buildConfigPaths);
+          requireThat(buildConfigSha256,
+            `Gate ${gate.id} authentication preflight build fingerprint is incomplete`,
+            'blocked-validation');
+          const compileContext = compileSnapshotContext(
+            config, gate, profile, toolchain, revision,
+            lockfileSha256, buildConfigSha256, dependency);
+          if (await loadCompileSnapshot(
+            compileContext, revision, profile, plan, dependency, false))
+            return null;
+        }
+        const authenticationWorkspace = await prepareAuthenticationWorkspace(
+          config, repo, gate, profile, plan, revision);
+        let keepWorkspace = false;
+        try {
+          const result = await runProfileStage(
+            gate, profile, 'authentication-check',
+            authenticationWorkspace.workspace, execute);
+          const preflight = parseValidationAuthPreflight(
+            result.output, plan.authentication);
+          requireThat(preflight,
+            `Gate ${gate.id} authentication preflight evidence is incomplete`,
+            'blocked-auth');
+          keepWorkspace = preflight.state === 'action-required-auth';
+          return {
+            preflight,
+            remediationWorkspace: authenticationWorkspace.workspace
+          };
+        } finally {
+          if (!keepWorkspace && existsSync(authenticationWorkspace.root))
+            removeValidationPath(
+              authenticationWorkspace.root, { recursive: true, force: true });
+        }
+      })()
+        .finally(() => authenticationPreflightPromises.delete(promiseKey));
+      authenticationPreflightPromises.set(promiseKey, checking);
+    }
+    const checked = await checking;
+    if (checked?.preflight.state === 'action-required-auth')
+      actions.push(validationAuthAction(
+        gate, { ...repo, referenceCheckout: checked.remediationWorkspace },
+        checked.preflight,
+        resolve(fileURLToPath(new URL('..', import.meta.url)))));
+  }
+  return actions;
+}
+async function prepareDependencySnapshot(config, job, gate, revision, profile, plan,
+  fingerprintRun, toolchain, lockfileSha256, execute, verifyOutputs = true) {
+  const context = dependencySnapshotContext(
+    config, gate, profile, plan, toolchain, lockfileSha256);
+  const { inputs, key, root, workspace, receiptPath } = context;
+  const cached = await loadDependencySnapshot(
+    context, profile, plan, verifyOutputs);
   if (cached) return cached;
   const promiseKey = `dependencies:${key}`;
   const existing = preparationPromises.get(promiseKey);
@@ -486,6 +686,22 @@ async function prepareDependencySnapshot(config, job, gate, revision, profile, p
       await git(workspace, ['checkout', '--detach', revision],
         checkoutEnvironment(), gate.timeoutMs);
       timings.push(stageTelemetry('dependency-checkout', checkoutStarted, 'miss'));
+      if (plan.authentication) {
+        const authentication = await runProfileStage(
+          gate, profile, 'authentication', workspace, execute);
+        timings.push(authentication.telemetry);
+        const authenticationFingerprint =
+          parseAuthenticationFingerprint(authentication.output);
+        requireThat(authenticationFingerprint?.provider ===
+          plan.authentication.provider &&
+          authenticationFingerprint.providerVersion ===
+            plan.authentication.providerVersion &&
+          authenticationFingerprint.feedCount === plan.authentication.feeds.length,
+        `Gate ${gate.id} authentication evidence is incomplete`, 'blocked-auth');
+        requireThat(await git(workspace, ['rev-parse', 'HEAD']) === revision &&
+          !(await git(workspace, ['status', '--porcelain'])),
+        `Gate ${gate.id} authentication mutated source`, 'blocked-auth');
+      }
       const result = await runProfileStage(gate, profile, 'dependencies', workspace, execute);
       timings.push(result.telemetry);
       requireThat(existsSync(profile.path) && hash(readFileSync(profile.path)) === profile.sha256,
@@ -535,44 +751,19 @@ async function prepareValidationGate(config, job, gate, revision, execute = comm
     `Gate ${gate.id} staged validation fingerprints are incomplete`, 'blocked-validation');
   let dependency = await prepareDependencySnapshot(config, job, gate, revision,
     profile, plan, fingerprintRun, toolchain, lockfileSha256, execute, false);
-  const compileContext = () => {
-    const inputs = {
-      gateId: gate.id, sourceRevision: revision, lockfileSha256, buildConfigSha256,
-      profileSha256: profile.sha256, toolchain, toolchainSha256: hash(json(toolchain)),
-      dependencyKey: dependency.key, dependencyIntegrity: dependency.integrity,
-      preparedSnapshotVersion: 3
-    };
-    const key = hash(json(inputs));
-    const root = preparedValidationRoot(config, 'c', gate.id, key);
-    return {
-      inputs, key, root, workspace: join(root, 'w'), receiptPath: join(root, 'r.json')
-    };
-  };
-  const load = async context => {
-    try {
-      const { inputs, workspace, receiptPath } = context;
-      if (!existsSync(receiptPath) || !existsSync(workspace)) return null;
-      const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
-      if (!validReceiptIntegrity(receipt) || receipt.type !== 'compile' ||
-        json(receipt.inputs) !== json(inputs) ||
-        await git(workspace, ['rev-parse', 'HEAD']) !== revision ||
-        await git(workspace, ['status', '--porcelain']) ||
-        !Array.isArray(receipt.outputs?.paths) ||
-        await outputFingerprint(workspace, receipt.outputs.paths) !== receipt.outputs.sha256) return null;
-      return {
-        ...receipt, receiptPath, workspace, profile, plan, cache: 'hit',
-        dependencyCache: dependency.cache, dependencyReceiptPath: dependency.receiptPath
-      };
-    } catch { return null; }
-  };
+  const compileContext = () => compileSnapshotContext(
+    config, gate, profile, toolchain, revision,
+    lockfileSha256, buildConfigSha256, dependency);
   let context = compileContext();
-  let cached = await load(context);
+  let cached = await loadCompileSnapshot(
+    context, revision, profile, plan, dependency, true);
   if (cached) return cached;
   if (!dependency.outputsVerified) {
     dependency = await prepareDependencySnapshot(config, job, gate, revision,
       profile, plan, fingerprintRun, toolchain, lockfileSha256, execute, true);
     context = compileContext();
-    cached = await load(context);
+    cached = await loadCompileSnapshot(
+      context, revision, profile, plan, dependency, true);
     if (cached) return cached;
   }
   const { inputs, key, root, workspace, receiptPath } = context;
@@ -1331,6 +1522,9 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
   requireThat(investigation?.version === assignment.investigationVersion, 'Assignment evidence was superseded');
   requireCurrentAssignment(config, ledger, investigation, assignment);
   const repo = repoFor(config, assignment.repoId);
+  const qualification = assignment.skillBindingId
+    ? ledger.qualification(skillQualificationId(assignment.repoId, assignment.skillBindingId))
+    : null;
   if (assignment.execution === 'hosted') {
     requireThat(typeof dependencies.agencyTransport === 'function',
       'An approved Agency transport is required; no local fallback is permitted', 'blocked-config');
@@ -1349,6 +1543,22 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
     rounds: []
   };
   try {
+    requireThat(activeWorkerCount(ledger) <
+      positive(config.limits.maxWorkers, 'maxWorkers'),
+    'Worker limit reached', 'overlap');
+    if (assignment.execution !== 'hosted') {
+      const baseRevision = await resolvedBaseRevision(repo, qualification);
+      const authenticationActions =
+        await (dependencies.preflightValidationAuthentication ??
+          preflightValidationAuthentication)(
+          config, repo, baseRevision, dependencies.execute ?? command);
+      if (authenticationActions.length > 0) {
+        return {
+          id, assignmentId: id, state: 'action-required-auth',
+          actions: authenticationActions
+        };
+      }
+    }
     ledger.transaction(() => {
       const active = activeWorkerCount(ledger);
       requireThat(active < positive(config.limits.maxWorkers, 'maxWorkers'), 'Worker limit reached', 'overlap');
@@ -1373,9 +1583,6 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
     const isolated = await provision(config, job, repo, assignment.skillQualification ?? null);
     ledger.moveJob(id, 'dispatching', 'running', isolated);
     const current = ledger.job(id);
-    const qualification = assignment.skillBindingId
-      ? ledger.qualification(skillQualificationId(assignment.repoId, assignment.skillBindingId))
-      : null;
     const loadedSkill = assignment.skillBindingId
       ? loadRepositorySkill(config, assignment, current.workspace, current.base_revision, qualification)
       : null;

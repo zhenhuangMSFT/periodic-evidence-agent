@@ -14,7 +14,7 @@ import { followRelated } from '../src/followup.js';
 import { revisitTracked } from '../src/revisit.js';
 import { collect, acceptReview, report, latestEvidence, reconcile, tick, previousUtcDay, nextDailyWake, readinessFingerprint } from '../src/coordinator.js';
 import { validateSeed, restrictedSession, principalPath, unwrapWorkiq, verifyPrincipal, channelRoot, messageSelect, nextWorkiqPage, validateWorkiqPath, workiqRuntimeError, prepareWorkiq } from '../src/runtime.js';
-import { makeAssignment, makePlannedImprovementAssignment, WorkerTools, provision, checkoutEnvironment, prepareValidation, runValidation, pushDraftBranch, createAdoDraft, command, minimalEnvironment, dispatch } from '../src/workers.js';
+import { makeAssignment, makePlannedImprovementAssignment, WorkerTools, provision, checkoutEnvironment, prepareValidation, preflightValidationAuthentication, runValidation, pushDraftBranch, createAdoDraft, command, minimalEnvironment, dispatch } from '../src/workers.js';
 import { recordAreaToImprove, recordTestCoveragePlan } from '../src/improvements.js';
 import { repositoryValidationContract, skillQualificationId } from '../src/repository-skills.js';
 import { cleanupWorkspace, cleanupWorkspaces } from '../src/workspace-gc.js';
@@ -101,13 +101,22 @@ async function fixture(t, provenance = 'synthetic', intent = 'rca-only') {
   const job = ctx.ledger.prepare(assignment);
   return { ...ctx, repo, evidence, investigation, assignment, job, g };
 }
-async function stagedValidationFixture(t, { parallelOutputs = false } = {}) {
+async function stagedValidationFixture(t, {
+  parallelOutputs = false, authentication = false
+} = {}) {
   const ctx = await fixture(t);
   writeFileSync(join(ctx.repo.referenceCheckout, '.gitignore'),
     '.pilot/\nextra/node_modules/\n');
   writeFileSync(join(ctx.repo.referenceCheckout, 'package.json'), '{"packageManager":"fixture@1.0.0"}\n');
   writeFileSync(join(ctx.repo.referenceCheckout, 'fixture.lock'), 'locked\n');
   writeFileSync(join(ctx.repo.referenceCheckout, 'build.config.js'), 'export default {};\n');
+  if (authentication) writeFileSync(
+    join(ctx.repo.referenceCheckout, '.yarnrc.yml'), [
+      'npmRegistryServer: "https://office.pkgs.visualstudio.com/_packaging/AugmentationLoop/npm/registry/"',
+      'npmScopes:',
+      '  office:',
+      '    npmRegistryServer: "https://office.pkgs.visualstudio.com/_packaging/Office/npm/registry/"'
+    ].join('\n'));
   mkdirSync(join(ctx.repo.referenceCheckout, 'src'), { recursive: true });
   writeFileSync(join(ctx.repo.referenceCheckout, 'src', 'value.js'), 'export const value = 1;\n');
   mkdirSync(join(ctx.repo.referenceCheckout, 'test'));
@@ -119,7 +128,7 @@ async function stagedValidationFixture(t, { parallelOutputs = false } = {}) {
   const current = { ...ctx.job, workspace: isolated.workspace };
   const profilePath = join(ctx.config.stateDirectory, 'staged-profile.mjs');
   const plan = {
-    version: 2,
+    version: authentication ? 3 : 2,
     stages: ['dependencies', 'compile', 'policy', 'test'],
     testOnlyPrefixes: ['test/'],
     lockfilePaths: ['package.json', 'fixture.lock'],
@@ -129,6 +138,21 @@ async function stagedValidationFixture(t, { parallelOutputs = false } = {}) {
       ? ['.pilot/install-state', ...Array.from({ length: 8 },
         (_, index) => `.pilot/output-${index}`)]
       : ['.pilot/install-state']
+  };
+  if (authentication) plan.authentication = {
+    type: 'azure-artifacts-npm',
+    provider: 'artifacts-npm-credprovider',
+    providerVersion: '1.2.1',
+    feeds: [
+      {
+        scope: null,
+        registry: 'https://office.pkgs.visualstudio.com/_packaging/AugmentationLoop/npm/registry/'
+      },
+      {
+        scope: 'office',
+        registry: 'https://office.pkgs.visualstudio.com/_packaging/Office/npm/registry/'
+      }
+    ]
   };
   writeFileSync(profilePath, `// PILOT_VALIDATION_PLAN: ${JSON.stringify(plan)}\n`);
   ctx.repo.validationGates = [{
@@ -140,7 +164,10 @@ async function stagedValidationFixture(t, { parallelOutputs = false } = {}) {
   const calls = [];
   const behavior = {
     toolchain: '1', failPreparation: false, failTest: false,
-    transientPolicy: false, policyAttempts: 0
+    transientPolicy: false, policyAttempts: 0, failAuthentication: false,
+    failDependencyAuthentication: false, mutateDuringAuthentication: false,
+    invalidAuthenticationEvidence: false, failTestWithAuthenticationText: false,
+    authenticationPreflight: 'ready', authenticationCheckDelayMs: 0
   };
   const execute = async (executable, args, cwd, timeout, env) => {
     const stage = env.PILOT_VALIDATION_STAGE;
@@ -152,7 +179,57 @@ async function stagedValidationFixture(t, { parallelOutputs = false } = {}) {
       })}\n`,
       stderr: ''
     };
+    if (stage === 'authentication-check') {
+      assert.equal(env.PILOT_TEST_SECRET, undefined);
+      if (behavior.authenticationCheckDelayMs)
+        await new Promise(resolve => setTimeout(
+          resolve, behavior.authenticationCheckDelayMs));
+      const state = behavior.authenticationPreflight;
+      if (state === 'invalid')
+        return { stdout: 'authentication check completed without evidence\n', stderr: '' };
+      const value = {
+        state: state === 'ready' ? 'ready' : 'action-required-auth',
+        provider: 'artifacts-npm-credprovider',
+        providerVersion: '1.2.1',
+        feedCount: 2,
+        tokenRecorded: false
+      };
+      if (state !== 'ready') {
+        value.reason = state;
+        value.installProvider = state === 'provider-missing';
+      }
+      return {
+        stdout: `PILOT_VALIDATION_AUTH_PREFLIGHT:${JSON.stringify(value)}\n`,
+        stderr: ''
+      };
+    }
+    if (stage === 'authentication') {
+      assert.equal(env.PILOT_TEST_SECRET, undefined);
+      if (behavior.mutateDuringAuthentication)
+        writeFileSync(join(cwd, 'src', 'value.js'), 'authentication changed source\n');
+      if (behavior.failAuthentication)
+        throw Object.assign(new Error('authentication failed'), {
+          code: 1, stdout: '',
+          stderr: 'No authentication configured for Azure Artifacts'
+        });
+      return {
+        stdout: behavior.invalidAuthenticationEvidence
+          ? 'authentication completed without evidence\n'
+          : `PILOT_VALIDATION_AUTH:${JSON.stringify({
+            provider: 'artifacts-npm-credprovider',
+            providerVersion: '1.2.1',
+            feedCount: 2,
+            tokenRecorded: false
+          })}\n`,
+        stderr: ''
+      };
+    }
     if (stage === 'dependencies') {
+      if (behavior.failDependencyAuthentication)
+        throw Object.assign(new Error('install authentication failed'), {
+          code: 1, stdout: '',
+          stderr: 'Invalid authentication (as an anonymous user)'
+        });
       if (behavior.failPreparation)
         throw Object.assign(new Error('install failed'), {
           code: 1, stdout: '', stderr: 'install failure'
@@ -195,6 +272,10 @@ async function stagedValidationFixture(t, { parallelOutputs = false } = {}) {
     if (stage === 'test' && behavior.failTest)
       throw Object.assign(new Error('test failed'), {
         code: 1, stdout: '', stderr: 'fixture failure'
+      });
+    if (stage === 'test' && behavior.failTestWithAuthenticationText)
+      throw Object.assign(new Error('test failed'), {
+        code: 1, stdout: '', stderr: 'expected HTTP 403 in application behavior'
       });
     return { stdout: `${stage} passed\n`, stderr: '' };
   };
@@ -811,6 +892,141 @@ test('cold staged validation passes with one complete prepared pipeline', async 
   assert.ok(artifact.telemetry.preparationDurationMs >= 0);
   assert.ok(artifact.telemetry.validationDurationMs >= 0);
 });
+test('cold authenticated preparation runs broker once and cache hits skip it', async t => {
+  const ctx = await stagedValidationFixture(t, { authentication: true });
+  const prepared = await prepareValidation(ctx.config, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute);
+  assert.deepEqual(ctx.calls, [
+    'fingerprint', 'authentication', 'dependencies', 'compile'
+  ]);
+  assert.equal(prepared.staged.timings.find(stage =>
+    stage.id === 'authentication').cache, 'miss');
+  const reloaded = await prepareValidation(ctx.config, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute);
+  assert.equal(reloaded.staged.receiptPath, prepared.staged.receiptPath);
+  assert.equal(ctx.calls.filter(stage => stage === 'authentication').length, 1);
+  assert.equal(ctx.calls.filter(stage => stage === 'dependencies').length, 1);
+  assert.equal(ctx.calls.filter(stage => stage === 'compile').length, 1);
+});
+test('authentication preflight returns a safe action before a cold dispatch', async t => {
+  const ctx = await stagedValidationFixture(t, { authentication: true });
+  ctx.behavior.authenticationPreflight = 'interactive-sign-in-required';
+  writeFileSync(join(ctx.repo.referenceCheckout, '.yarnrc.yml'),
+    'npmRegistryServer: "https://example.invalid/wrong-revision/"\n');
+  const actions = await preflightValidationAuthentication(
+    ctx.config, ctx.repo, ctx.isolated.baseRevision, ctx.execute);
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].state, 'action-required-auth');
+  assert.equal(actions[0].reason, 'interactive-sign-in-required');
+  assert.equal(actions[0].requiresInstallApproval, false);
+  assert.equal(actions[0].tokenRequested, false);
+  assert.deepEqual(actions[0].remediation.args.slice(0, 4), [
+    'run', 'setup:validation-auth', '--', '-Workspace'
+  ]);
+  assert.match(actions[0].remediation.args[4],
+    new RegExp(`pv[\\\\/]a[\\\\/].+[\\\\/]w$`));
+  const exactConfig = readFileSync(
+    join(actions[0].remediation.args[4], '.yarnrc.yml'), 'utf8');
+  assert.match(exactConfig, /AugmentationLoop/);
+  assert.doesNotMatch(exactConfig, /wrong-revision/);
+  assert.deepEqual(ctx.calls, ['fingerprint', 'authentication-check']);
+});
+test('trusted dependency cache hits skip authentication checks', async t => {
+  const ctx = await stagedValidationFixture(t, { authentication: true });
+  const prepared = await prepareValidation(ctx.config, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute);
+  ctx.calls.length = 0;
+  ctx.behavior.authenticationPreflight = 'interactive-sign-in-required';
+  const actions = await preflightValidationAuthentication(
+    ctx.config, ctx.repo, ctx.isolated.baseRevision, ctx.execute);
+  assert.deepEqual(actions, []);
+  assert.deepEqual(ctx.calls, ['fingerprint']);
+  rmSync(join(dirname(prepared.staged.dependencyReceiptPath), 'w'),
+    { recursive: true, force: true });
+  ctx.calls.length = 0;
+  const compileOnlyActions = await preflightValidationAuthentication(
+    ctx.config, ctx.repo, ctx.isolated.baseRevision, ctx.execute);
+  assert.deepEqual(compileOnlyActions, []);
+  assert.deepEqual(ctx.calls, ['fingerprint']);
+  rmSync(prepared.staged.workspace, { recursive: true, force: true });
+  ctx.calls.length = 0;
+  const missingSnapshotActions = await preflightValidationAuthentication(
+    ctx.config, ctx.repo, ctx.isolated.baseRevision, ctx.execute);
+  assert.equal(missingSnapshotActions[0].state, 'action-required-auth');
+  assert.deepEqual(ctx.calls, ['fingerprint', 'authentication-check']);
+});
+test('authentication preflight is singleflight and malformed evidence blocks', async t => {
+  const ctx = await stagedValidationFixture(t, { authentication: true });
+  ctx.behavior.authenticationPreflight = 'provider-missing';
+  ctx.behavior.authenticationCheckDelayMs = 20;
+  const [left, right] = await Promise.all([
+    preflightValidationAuthentication(
+      ctx.config, ctx.repo, ctx.isolated.baseRevision, ctx.execute),
+    preflightValidationAuthentication(
+      ctx.config, ctx.repo, ctx.isolated.baseRevision, ctx.execute)
+  ]);
+  assert.equal(left[0].requiresInstallApproval, true);
+  assert.deepEqual(right, left);
+  assert.equal(ctx.calls.filter(stage => stage === 'authentication-check').length, 1);
+  ctx.behavior.authenticationPreflight = 'invalid';
+  await assert.rejects(preflightValidationAuthentication(
+    ctx.config, ctx.repo, ctx.isolated.baseRevision, ctx.execute), error =>
+    error.code === 'blocked-auth');
+});
+test('authentication failure blocks before dependency restore without retrying', async t => {
+  const ctx = await stagedValidationFixture(t, { authentication: true });
+  ctx.behavior.failAuthentication = true;
+  const result = await runValidation(ctx.config, ctx.ledger, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute, rmSync, {});
+  assert.equal(result[0].status, 'blocked');
+  assert.equal(result[0].blockedReason, 'blocked-auth');
+  assert.equal(result[0].attemptCount, 1);
+  assert.deepEqual(ctx.calls, ['fingerprint', 'authentication']);
+  const artifact = JSON.parse(readFileSync(result[0].artifactRefs[0]));
+  assert.equal(artifact.output.exitCode, 'blocked-auth');
+  assert.match(artifact.output.stderr, /Azure Artifacts credentials/);
+  assert.doesNotMatch(artifact.output.stderr, /anonymous user/i);
+  assert.equal(artifact.telemetry.preparationTimings.at(-1).id, 'authentication');
+});
+test('dependency restore authentication errors are classified as blocked-auth', async t => {
+  const ctx = await stagedValidationFixture(t, { authentication: true });
+  ctx.behavior.failDependencyAuthentication = true;
+  const result = await runValidation(ctx.config, ctx.ledger, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute, rmSync, {});
+  assert.equal(result[0].status, 'blocked');
+  assert.equal(result[0].blockedReason, 'blocked-auth');
+  assert.deepEqual(ctx.calls, ['fingerprint', 'authentication', 'dependencies']);
+  assert.equal(result[0].attemptCount, 1);
+});
+test('auth-like test output remains a test failure rather than an auth blocker', async t => {
+  const ctx = await stagedValidationFixture(t, { authentication: true });
+  const prepared = await prepareValidation(ctx.config, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute);
+  ctx.behavior.failTestWithAuthenticationText = true;
+  const result = await runValidation(ctx.config, ctx.ledger, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute, rmSync, prepared);
+  assert.equal(result[0].status, 'failed');
+  assert.equal(result[0].blockedReason, null);
+  assert.equal(result[0].attemptCount, 1);
+});
+test('authentication cannot modify the exact-revision source workspace', async t => {
+  const ctx = await stagedValidationFixture(t, { authentication: true });
+  ctx.behavior.mutateDuringAuthentication = true;
+  const result = await runValidation(ctx.config, ctx.ledger, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute, rmSync, {});
+  assert.equal(result[0].status, 'blocked');
+  assert.equal(result[0].blockedReason, 'blocked-auth');
+  assert.deepEqual(ctx.calls, ['fingerprint', 'authentication']);
+});
+test('authentication must emit controller-auditable non-secret evidence', async t => {
+  const ctx = await stagedValidationFixture(t, { authentication: true });
+  ctx.behavior.invalidAuthenticationEvidence = true;
+  const result = await runValidation(ctx.config, ctx.ledger, ctx.current, ctx.repo,
+    ctx.isolated.baseRevision, ctx.execute, rmSync, {});
+  assert.equal(result[0].status, 'blocked');
+  assert.equal(result[0].blockedReason, 'blocked-auth');
+  assert.deepEqual(ctx.calls, ['fingerprint', 'authentication']);
+});
 test('failed test-only revision repairs without repeating dependency or compile stages', async t => {
   const ctx = await stagedValidationFixture(t);
   const prepared = await prepareValidation(ctx.config, ctx.current, ctx.repo,
@@ -1081,8 +1297,12 @@ test('complete controller path: simulated adapter/model/PR, real isolated edit c
   config.workspaceCleanup.enabled = true;
   await command('git', ['init', '--bare', '--quiet', repo.remote], root);
   const primaryHead = (await g(['rev-parse', 'HEAD'])).stdout;
-  let modelCalls = 0, draftCalls = 0;
-  const result = await dispatch(config, ledger, job.id, {
+  let modelCalls = 0, draftCalls = 0, authenticationReady = false;
+  const dependencies = {
+    preflightValidationAuthentication: async () => authenticationReady ? [] : [{
+      state: 'action-required-auth',
+      code: 'validation-authentication-required'
+    }],
     runModel: async (c, l, current, assignment, investigation, toolkit) => {
       modelCalls++;
       assert.match(toolkit.read('src\\value.js'), /value = 1/);
@@ -1096,7 +1316,14 @@ test('complete controller path: simulated adapter/model/PR, real isolated edit c
       assert.equal(remoteHead, revision);
       return { url: 'https://example.invalid/synthetic-draft/1', isDraft: true, headRevision: revision };
     }
-  });
+  };
+  const action = await dispatch(config, ledger, job.id, dependencies);
+  assert.equal(action.state, 'action-required-auth');
+  assert.equal(ledger.job(job.id).state, 'prepared');
+  assert.equal(modelCalls, 0);
+  assert.equal(ledger.all('workerResult').length, 0);
+  authenticationReady = true;
+  const result = await dispatch(config, ledger, job.id, dependencies);
   assert.equal(result.outcome, 'draft-pr-validated');
   assert.equal(result.workspaceCleanup.state, 'removed', json(result.workspaceCleanup));
   assert.equal(existsSync(ledger.job(job.id).workspace), false);
