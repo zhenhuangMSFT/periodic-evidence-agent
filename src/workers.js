@@ -414,14 +414,15 @@ function blockedAuthentication(error) {
   blocked.stageTelemetry = error.stageTelemetry;
   return blocked;
 }
-async function executeValidation(gate, args, workspace, stage, execute, temporaryDirectory = null) {
+async function executeValidation(gate, args, workspace, stage, execute,
+  temporaryDirectory = null, environment = {}) {
   const run = execute === command ? nativeCommand : execute;
   const auth = validationPackageAuth(gate);
   // Native build tools spawn their own Git; command-line -c settings do not reach them.
   // Fingerprinting uses the authored workspace, not a controller validation clone.
   if (process.platform === 'win32' && !['fingerprint', 'authentication-check'].includes(stage))
     await git(workspace, ['config', '--local', 'core.longpaths', 'true']);
-  const env = minimalEnvironment();
+  const env = { ...minimalEnvironment(), ...environment };
   if (temporaryDirectory)
     Object.assign(env, { TEMP: temporaryDirectory, TMP: temporaryDirectory, TMPDIR: temporaryDirectory });
   if (stage) env.PILOT_VALIDATION_STAGE = stage;
@@ -455,7 +456,8 @@ async function executeValidation(gate, args, workspace, stage, execute, temporar
     delete env.YARN_NPM_AUTH_TOKEN;
   }
 }
-async function runProfileStage(gate, profile, stage, workspace, execute = command, temporaryDirectory = null) {
+async function runProfileStage(gate, profile, stage, workspace, execute = command,
+  temporaryDirectory = null, environment = {}) {
   const profileRoot = join(dirname(workspace), 'validation-profiles');
   mkdirSync(profileRoot, { recursive: true });
   const privateProfile = join(profileRoot,
@@ -465,7 +467,8 @@ async function runProfileStage(gate, profile, stage, workspace, execute = comman
     .replaceAll('{profile}', privateProfile));
   const startedAt = now();
   try {
-    const output = await executeValidation(gate, args, workspace, stage, execute, temporaryDirectory);
+    const output = await executeValidation(
+      gate, args, workspace, stage, execute, temporaryDirectory, environment);
     return { output, telemetry: stageTelemetry(stage, startedAt, 'miss', output) };
   } catch (error) {
     error.stageTelemetry = stageTelemetry(stage, startedAt, 'miss', {
@@ -1671,7 +1674,10 @@ async function runStagedGate(config, ledger, job, repo, gate, revision, prepared
         for (const stage of ['policy', 'test']) {
           try {
             const result = await runProfileStage(gate, receipt.profile, stage,
-              receipt.workspace, execute, stage === 'test' ? successorNative?.temporaryDirectory : null);
+              receipt.workspace, execute,
+              stage === 'test' ? successorNative?.temporaryDirectory : null, {
+                PILOT_VALIDATION_BASE_REVISION: job.base_revision
+              });
             timings.push(result.telemetry);
             output.stdout += result.output.stdout ?? '';
             output.stderr += result.output.stderr ?? '';

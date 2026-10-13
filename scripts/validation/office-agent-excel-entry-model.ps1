@@ -172,7 +172,15 @@ if ($stage -in @('all', 'policy')) {
 }
 
 if ($stage -in @('all', 'test')) {
-    $tests = @(& git diff --name-only HEAD^ HEAD -- 'agents/office-agent/tests/integration/scenarios/apps/excel/*.test.ts')
+    $baseRevision = $env:PILOT_VALIDATION_BASE_REVISION
+    if ([string]::IsNullOrWhiteSpace($baseRevision) -or $baseRevision -notmatch '^[a-f0-9]{40,64}$') {
+        throw 'PILOT_VALIDATION_PROFILE_ERROR: exact assignment base revision is unavailable'
+    }
+    & git merge-base --is-ancestor $baseRevision HEAD
+    if ($LASTEXITCODE -ne 0) {
+        throw 'PILOT_VALIDATION_PROFILE_ERROR: assignment base revision is not an ancestor of the validated commit'
+    }
+    $tests = @(& git diff --name-only "$baseRevision..HEAD" -- 'agents/office-agent/tests/integration/scenarios/apps/excel/*.test.ts')
     if ($LASTEXITCODE -ne 0) {
         throw "PILOT_VALIDATION_PROFILE_ERROR: git diff exited with code $LASTEXITCODE"
     }

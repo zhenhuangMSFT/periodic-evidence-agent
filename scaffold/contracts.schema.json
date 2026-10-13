@@ -900,6 +900,7 @@
             { "type": "null" },
             { "enum": ["runner-timeout", "runner-unavailable", "runner-mutated-source",
               "validation-workspace-unavailable", "validation-profile-changed",
+              "validation-profile-error", "prepared-cache-corrupt",
               "validation-cleanup-failed"] }
           ]
         }

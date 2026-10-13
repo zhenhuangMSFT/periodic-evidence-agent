@@ -396,7 +396,8 @@ test('validation repair budget defaults to ten and rejects larger values', t => 
 });
 test('OfficeAgent Excel validation profile converts selectors to package-relative paths', () => {
   const profile = readFileSync('scripts/validation/office-agent-excel-entry-model.ps1', 'utf8');
-  assert.match(profile, /git diff --name-only HEAD\^ HEAD -- 'agents\/office-agent\/tests\/integration/);
+  assert.match(profile, /PILOT_VALIDATION_BASE_REVISION/);
+  assert.match(profile, /git diff --name-only "\$baseRevision\.\.HEAD" -- 'agents\/office-agent\/tests\/integration/);
   assert.match(profile, /\^agents\/office-agent\/\(tests\/integration\/\.\+\\\.test\\\.ts\)\$/);
   assert.match(profile, /Join-Path 'agents\\office-agent' \$test/);
   assert.match(profile, /PILOT_VALIDATION_PROFILE_ERROR:/);
