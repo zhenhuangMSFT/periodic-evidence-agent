@@ -68,13 +68,19 @@ export function validateRecord(value, type = value.recordType) {
   return value;
 }
 export const exclusions = contracts.$defs.exclusion.enum;
+export function workspaceCleanupPolicy(config) {
+  return validateRecord(config.workspaceCleanup ?? {
+    enabled: false, retentionHours: 0
+  }, 'workspaceCleanupPolicy');
+}
 export function configAt(path) {
   const config = readJson(path);
   requireThat(config.version === 1, 'Unsupported configuration version');
   windowCheck(config.window);
   requireThat(config.activation && ['collect', 'review', 'dispatch'].every(k => typeof config.activation[k] === 'boolean'),
     'Explicit collect/review/dispatch activation booleans are required');
-  requireThat(config.statePolicy?.retention === 'manual-no-auto-delete', 'Only explicit manual retention is supported');
+  requireThat(config.statePolicy?.retention === 'manual-no-auto-delete', 'Evidence state requires explicit manual retention');
+  workspaceCleanupPolicy(config);
   requireThat([0, 1].includes(config.followUp.maxDepth), 'Follow-up is limited to zero or one level');
   if (config.followUp.maxDepth === 1) {
     positive(config.followUp.maxItems, 'followUp.maxItems'); positive(config.followUp.maxToolCalls, 'followUp.maxToolCalls');

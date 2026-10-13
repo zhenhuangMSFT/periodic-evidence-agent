@@ -22,11 +22,12 @@ import { setupLocalEnvironment } from './setup.js';
 import { publishReviewReceipt, verifyReviewReceipt } from './pr-review-receipt.js';
 import { acceptReviewedHandoff } from './reviewed-handoff.js';
 import { acceptFilterProposerHandoff } from './filter-handoff.js';
+import { cleanupWorkspaces } from './workspace-gc.js';
 
 const [action = 'help', ...args] = process.argv.slice(2);
 const configIndex = args.indexOf('--config');
 const configFile = configIndex >= 0 ? args[configIndex + 1] :
-  ['setup', 'bootstrap-repo', 'submit-reviewed-handoff', 'submit-filter-handoff'].includes(action)
+  ['setup', 'bootstrap-repo', 'submit-reviewed-handoff', 'submit-filter-handoff', 'workspace-gc'].includes(action)
     ? 'pilot.local.json' : 'pilot.example.json';
 function option(name) {
   const index = args.indexOf(name); return index < 0 ? null : args[index + 1];
@@ -38,9 +39,10 @@ function failedOutcome(result) {
   if (Array.isArray(result)) return result.some(failedOutcome);
   if (!result || typeof result !== 'object') return false;
   return Boolean(result.error) ||
+    result.state === 'failed' ||
     ['blocked', 'blocked-auth', 'partial', 'partial-or-blocked', 'draft-pr-validation-failed'].includes(result.state) ||
     ['blocked', 'draft-pr-validation-failed'].includes(result.outcome) ||
-    ['collection', 'reviews', 'workers', 'result'].some(key => failedOutcome(result[key]));
+    ['collection', 'reviews', 'workers', 'result', 'workspaces'].some(key => failedOutcome(result[key]));
 }
 const help = `Local evidence pilot (live operations disabled by default)
   node src\\cli.js setup [--repo ID ...] [--allow-clone] [--search-root C:\\src] [--clone-root D:\\repos]
@@ -52,6 +54,7 @@ const help = `Local evidence pilot (live operations disabled by default)
   node src\\cli.js submit-filter-handoff --file filter-handoff.json --config pilot.local.json --prepare
   node src\\cli.js submit-filter-handoff --file filter-handoff.json --config pilot.local.json --execute --authorize-commit --authorize-push --authorize-draft-pr
   node src\\cli.js status [--config pilot.local.json]
+  node src\\cli.js workspace-gc --config pilot.local.json [--execute]
   node src\\cli.js doctor
   node src\\cli.js runtime-smoke
   node src\\cli.js auth-check
@@ -271,6 +274,9 @@ try {
         break;
       }
       case 'status': result = ledger.status(); break;
+      case 'workspace-gc':
+        result = await cleanupWorkspaces(config, ledger, { execute: args.includes('--execute') });
+        break;
       case 'collect': result = await collect(config, ledger); break;
       case 'run': result = await runOnce(config, ledger); break;
       case 'review':

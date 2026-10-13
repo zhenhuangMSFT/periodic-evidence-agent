@@ -44,6 +44,8 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS operations (
         id TEXT PRIMARY KEY, job_id TEXT NOT NULL, kind TEXT NOT NULL,
         state TEXT NOT NULL, detail TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS workspace_cleanup (
+        job_id TEXT PRIMARY KEY, state TEXT NOT NULL, detail TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TRIGGER IF NOT EXISTS immutable_records_update BEFORE UPDATE ON records
         BEGIN SELECT RAISE(ABORT,'Records are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_records_delete BEFORE DELETE ON records
@@ -224,6 +226,9 @@ export class Ledger {
   }
   job(id) { return this.db.prepare('SELECT * FROM jobs WHERE id=?').get(id); }
   moveJob(id, before, after, { workspace = null, baseRevision = null, error = null } = {}) {
+    requireThat(!['prepared', 'dispatching', 'running'].includes(after) ||
+      !['deleting', 'removed'].includes(this.workspaceCleanup(id)?.state),
+    'Cleaned workspace cannot be reused; prepare a new assignment', 'blocked-reconciliation');
     const result = this.db.prepare(`UPDATE jobs SET state=?,workspace=COALESCE(?,workspace),
       base_revision=COALESCE(?,base_revision),error=?,updated_at=? WHERE id=? AND state=?`)
       .run(after, workspace, baseRevision, error && json(error), now(), id, before);
@@ -236,6 +241,18 @@ export class Ledger {
   }
   finishOperation(id, state, detail) {
     this.db.prepare('UPDATE operations SET state=?,detail=?,updated_at=? WHERE id=?').run(state, json(detail), now(), id);
+  }
+  workspaceCleanup(id) {
+    const row = this.db.prepare('SELECT detail FROM workspace_cleanup WHERE job_id=?').get(id);
+    return row ? JSON.parse(row.detail) : null;
+  }
+  recordWorkspaceCleanup(id, detail) {
+    validateRecord(detail, 'workspaceCleanupResult');
+    requireThat(detail.jobId === id, 'Cleanup receipt does not match its task', 'invalid-record');
+    if (this.workspaceCleanup(id)?.state === 'removed' && detail.state !== 'removed') return;
+    this.db.prepare(`INSERT INTO workspace_cleanup VALUES(?,?,?,?)
+      ON CONFLICT(job_id) DO UPDATE SET state=excluded.state,detail=excluded.detail,updated_at=excluded.updated_at`)
+      .run(id, detail.state, json(detail), now());
   }
   evidenceForRuns(ids) {
     return [...new Set(ids.flatMap(id => this.db.prepare('SELECT evidence_id FROM observations WHERE run_id=?').all(id).map(r => r.evidence_id)))]
@@ -256,6 +273,8 @@ export class Ledger {
       trackedState: this.db.prepare('SELECT * FROM tracked_state').all(),
       jobs: this.db.prepare('SELECT * FROM jobs ORDER BY updated_at DESC').all(),
       operations: this.db.prepare('SELECT * FROM operations ORDER BY updated_at DESC').all(),
+      workspaceCleanup: this.db.prepare('SELECT detail FROM workspace_cleanup ORDER BY updated_at DESC')
+        .all().map(row => JSON.parse(row.detail)),
       counts: this.db.prepare('SELECT kind,COUNT(*) AS count FROM records GROUP BY kind').all()
     };
   }

@@ -5,6 +5,7 @@
   "activation": { "collect": false, "review": false, "dispatch": false },
   "stateDirectory": ".state",
   "statePolicy": { "accessApproved": false, "retention": "manual-no-auto-delete" },
+  "workspaceCleanup": { "enabled": false, "retentionHours": 0 },
   "identity": {
     "designatedUser": "collector@example.invalid",
     "displayName": "Synthetic example - replace before live use",

@@ -7,7 +7,8 @@ import {
   readdirSync, readlinkSync, symlinkSync, copyFileSync, rmSync
 } from 'node:fs';
 import { join, dirname, resolve, relative, isAbsolute, extname } from 'node:path';
-import { boundedPath, hash, json, now, positive, requireThat, safeError, uuid, validateRecord, PilotError, modelPreflight } from './common.js';
+import { boundedPath, hash, json, now, positive, requireThat, safeError, uuid, validateRecord, PilotError, modelPreflight, workspaceCleanupPolicy } from './common.js';
+import { cleanupWorkspace } from './workspace-gc.js';
 import { withClient, restrictedSession, defineTool } from './runtime.js';
 import {
   loadRepositorySkill, normalizeSkillResult, pinSkillQualification, resolveSkillBinding, skillQualificationId
@@ -161,6 +162,11 @@ export async function provision(config, job, repo, qualification = null, depende
     await (dependencies.fetchQualifiedRevision ?? fetchQualifiedRevision)(
       config, workspace, repo, baseRevision, dependencies.getToken);
   await git(workspace, ['checkout', '-b', `pilot/${job.id}`, baseRevision], checkoutEnvironment());
+  const inheritedBranches = (await git(workspace, [
+    'for-each-ref', '--format=%(refname)', 'refs/heads/'
+  ])).split(/\r?\n/).filter(ref => ref && ref !== `refs/heads/pilot/${job.id}`);
+  for (const ref of inheritedBranches)
+    await git(workspace, ['update-ref', '-d', ref]);
   return { workspace, baseRevision };
 }
 export function checkoutEnvironment() {
@@ -1304,6 +1310,8 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
   requireThat(config.activation.dispatch, 'Worker dispatch is disabled');
   const job = ledger.job(id);
   requireThat(job?.state === 'prepared', 'Only a never-dispatched prepared assignment can launch; reconcile all other states', 'blocked-reconciliation');
+  requireThat(!['deleting', 'removed'].includes(ledger.workspaceCleanup(id)?.state),
+    'Cleaned workspace cannot be reused; prepare a new assignment', 'blocked-reconciliation');
   const assignment = ledger.get('assignment', id);
   const currentEvidence = new Set(ledger.latestEvidence().map(e => e.id));
   requireThat(assignment.evidenceIds.every(e => currentEvidence.has(e)), 'New source evidence requires review before dispatch', 'blocked-reconciliation');
@@ -1330,6 +1338,7 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
   } else modelPreflight(config);
   const owner = ledger.acquire('dispatch');
   let proposal = null, revision = null, draftPR = null, validation = [], validationAttempts = [];
+  let deliveredResult;
   const toolUsage = {
     limit: assignment.bounds.maxToolCalls,
     used: 0,
@@ -1459,7 +1468,7 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
     };
     validateRecord(result); ledger.put(result);
     ledger.moveJob(id, 'running', outcome === 'blocked' ? 'blocked' : 'completed');
-    return result;
+    deliveredResult = result;
   } catch (error) {
     const current = ledger.job(id);
     if (current && ['dispatching', 'running'].includes(current.state)) {
@@ -1481,6 +1490,19 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
     }
     throw error;
   } finally { ledger.release('dispatch', owner); }
+  if (deliveredResult.draftPR && workspaceCleanupPolicy(config).enabled) {
+    try {
+      deliveredResult.workspaceCleanup = await cleanupWorkspace(config, ledger, id,
+        { execute: true }, dependencies.workspaceCleanup);
+    } catch (error) {
+      deliveredResult.workspaceCleanup = {
+        jobId: id, workspace: ledger.job(id).workspace, state: 'failed',
+        reason: 'Cleanup audit could not be completed; inspect ledger state before retrying',
+        checkedAt: now(), error: safeError(error)
+      };
+    }
+  }
+  return validateRecord(deliveredResult);
 }
 
 export async function dispatchReviewedHandoff(config, ledger, id, dependencies = {}) {

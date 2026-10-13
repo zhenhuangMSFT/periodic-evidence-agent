@@ -4,10 +4,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { probeWorkiq } from '../scripts/Workiq-Auth-Repro.mjs';
 import { Ledger } from '../src/ledger.js';
-import { configAt, hash, json, now, exclusions, PilotError, boundedPath, validateRecord } from '../src/common.js';
+import { configAt, hash, json, now, exclusions, PilotError, boundedPath, validateRecord, workspaceCleanupPolicy } from '../src/common.js';
 import { collectAdo, collectWorkiq, collectIcm, evidenceEnvelope, area, wiql, adoRecord } from '../src/sources.js';
 import { dryRun } from '../src/dry-run.js';
 import { followRelated } from '../src/followup.js';
@@ -17,6 +17,7 @@ import { validateSeed, restrictedSession, principalPath, unwrapWorkiq, verifyPri
 import { makeAssignment, makePlannedImprovementAssignment, WorkerTools, provision, checkoutEnvironment, prepareValidation, runValidation, pushDraftBranch, createAdoDraft, command, minimalEnvironment, dispatch } from '../src/workers.js';
 import { recordAreaToImprove, recordTestCoveragePlan } from '../src/improvements.js';
 import { repositoryValidationContract, skillQualificationId } from '../src/repository-skills.js';
+import { cleanupWorkspace, cleanupWorkspaces } from '../src/workspace-gc.js';
 
 function setup(t) {
   const root = mkdtempSync(join(tmpdir(), 'evidence-pilot-test-'));
@@ -207,6 +208,36 @@ async function stagedValidationFixture(t, { parallelOutputs = false } = {}) {
     return (await gitArgs(['rev-parse', 'HEAD'])).stdout.trim();
   };
   return { ...ctx, isolated, current, profilePath, calls, behavior, execute, commit };
+}
+
+async function deliveredWorkspace(t) {
+  const ctx = await fixture(t, 'authenticated-source', 'defect-fix');
+  const isolated = await provision(ctx.config, ctx.job, ctx.repo);
+  ctx.ledger.moveJob(ctx.job.id, 'prepared', 'dispatching');
+  ctx.ledger.moveJob(ctx.job.id, 'dispatching', 'running', isolated);
+  await command('git', ['init', '--bare', '--quiet', ctx.repo.remote], ctx.root);
+  await pushDraftBranch(ctx.config, isolated.workspace, ctx.repo,
+    `HEAD:refs/heads/pilot/${ctx.job.id}`);
+  const artifact = join(ctx.config.stateDirectory, 'delivery-validation.json');
+  writeFileSync(artifact, json({ sourceRevision: isolated.baseRevision, status: 'passed' }));
+  const result = structuredClone(JSON.parse(readFileSync('scaffold/example-flows.json'))
+    .records.find(record => record.recordType === 'workerResult'));
+  Object.assign(result, {
+    id: `delivery-${ctx.job.id}`, assignmentId: ctx.job.id, attemptId: ctx.job.session_id,
+    reportedAt: now(), outcome: 'draft-pr-validated', sourceRevision: isolated.baseRevision,
+    draftPR: { url: 'https://example.invalid/draft/1', isDraft: true, headRevision: isolated.baseRevision },
+    skillExecution: null, blocker: null
+  });
+  result.validation = [{
+    ...result.validation[0], gateId: 'source-test', status: 'passed',
+    sourceRevision: isolated.baseRevision, artifactRefs: [artifact]
+  }];
+  result.validationAttempts = [{
+    round: 0, sourceRevision: isolated.baseRevision, validation: result.validation
+  }];
+  ctx.ledger.put(result);
+  ctx.ledger.moveJob(ctx.job.id, 'running', 'completed');
+  return { ...ctx, isolated, result, artifact };
 }
 
 test('portable scaffold config and all synthetic example records remain valid', () => {
@@ -1047,6 +1078,7 @@ test('unresolved changed-evidence policy blocks recurring collection', async t =
 test('complete controller path: simulated adapter/model/PR, real isolated edit commit source-test and local push', async t => {
   const { config, ledger, job, repo, g, root } = await fixture(t, 'authenticated-source', 'defect-fix');
   config.activation.dispatch = true; config.limits.maxAiCreditsPerSession = 1;
+  config.workspaceCleanup.enabled = true;
   await command('git', ['init', '--bare', '--quiet', repo.remote], root);
   const primaryHead = (await g(['rev-parse', 'HEAD'])).stdout;
   let modelCalls = 0, draftCalls = 0;
@@ -1066,6 +1098,10 @@ test('complete controller path: simulated adapter/model/PR, real isolated edit c
     }
   });
   assert.equal(result.outcome, 'draft-pr-validated');
+  assert.equal(result.workspaceCleanup.state, 'removed', json(result.workspaceCleanup));
+  assert.equal(existsSync(ledger.job(job.id).workspace), false);
+  assert.equal(ledger.workspaceCleanup(job.id).sourceRevision, result.sourceRevision);
+  assert.ok(result.validation[0].artifactRefs.every(existsSync));
   assert.equal(result.validation[0].sourceRevision, result.draftPR.headRevision);
   assert.equal(ledger.job(job.id).state, 'completed');
   assert.equal(ledger.all('workerResult').length, 1);
@@ -1191,6 +1227,252 @@ test('planned OA skill path creates a source-bound validated draft result throug
   assert.equal(result.validation[0].sourceRevision, result.sourceRevision);
   assert.equal(result.draftPR.headRevision, result.sourceRevision);
 });
+test('workspace GC previews delivery, reports deletion failure and safely retries without deleting caches or evidence', async t => {
+  const ctx = await deliveredWorkspace(t);
+  const { config, ledger, job, repo, root, isolated, artifact, result } = ctx;
+  const dependencyCache = join(config.stateDirectory, 'pv', 'd', 'fixture', 'w');
+  const compileCache = join(config.stateDirectory, 'pv', 'c', 'fixture', 'w');
+  for (const path of [dependencyCache, compileCache]) {
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, 'preserved'), 'cache\n');
+  }
+  const operationsBefore = ledger.status().operations.length;
+  const preview = await cleanupWorkspaces(config, ledger);
+  assert.equal(preview.mode, 'preview');
+  assert.equal(preview.workspaces[0].state, 'eligible', json(preview));
+  assert.equal(ledger.workspaceCleanup(job.id), null);
+  assert.equal(ledger.status().operations.length, operationsBefore);
+  assert.equal(existsSync(isolated.workspace), true);
+  const configPath = join(root, 'cleanup-config.json');
+  const cli = (...args) => spawnSync(process.execPath, [
+    fileURLToPath(new URL('../src/cli.js', import.meta.url)), 'workspace-gc',
+    '--config', configPath, ...args
+  ], { cwd: root, encoding: 'utf8', timeout: 120000 });
+  writeFileSync(configPath, json(config));
+  const cliPreview = cli();
+  assert.equal(cliPreview.status, 0, cliPreview.stderr);
+  assert.equal(JSON.parse(cliPreview.stdout).workspaces[0].state, 'eligible');
+  assert.equal(ledger.workspaceCleanup(job.id), null);
+  const originalRemote = repo.remote;
+  repo.remote = join(root, 'missing-remote.git');
+  await command('git', ['remote', 'set-url', 'origin', repo.remote], isolated.workspace);
+  writeFileSync(configPath, json(config));
+  const cliFailure = cli('--execute');
+  assert.equal(cliFailure.status, 2, cliFailure.stderr);
+  assert.equal(JSON.parse(cliFailure.stdout).workspaces[0].state, 'failed');
+  assert.equal(existsSync(isolated.workspace), true);
+  repo.remote = originalRemote;
+  await command('git', ['remote', 'set-url', 'origin', repo.remote], isolated.workspace);
+  const failed = await cleanupWorkspace(config, ledger, job.id, { execute: true }, {
+    remove: () => { throw Object.assign(new Error('locked'), { code: 'EBUSY' }); }
+  });
+  assert.equal(failed.state, 'failed');
+  assert.equal(ledger.workspaceCleanup(job.id).state, 'failed');
+  assert.equal(ledger.job(job.id).state, 'completed');
+  assert.equal(ledger.get('workerResult', result.id).outcome, 'draft-pr-validated');
+  assert.equal(existsSync(isolated.workspace), true);
+  const removed = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(removed.state, 'removed', json(removed));
+  assert.equal(existsSync(isolated.workspace), false);
+  assert.ok([repo.referenceCheckout, artifact, dependencyCache, compileCache].every(existsSync));
+  const remoteHead = (await command('git', ['--git-dir', repo.remote, 'rev-parse',
+    `refs/heads/pilot/${job.id}`], root)).stdout.trim();
+  assert.equal(remoteHead, result.sourceRevision);
+  const count = ledger.status().operations.length;
+  const repeated = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(repeated.state, 'removed');
+  assert.equal(ledger.workspaceCleanup(job.id).state, 'removed');
+  assert.equal(ledger.status().operations.length, count);
+  assert.throws(() => ledger.moveJob(job.id, 'completed', 'prepared'), /Cleaned workspace/);
+  const reopened = new Ledger(config.stateDirectory);
+  try {
+    assert.equal(reopened.workspaceCleanup(job.id).state, 'removed');
+  } finally { reopened.close(); }
+  mkdirSync(isolated.workspace);
+  writeFileSync(join(isolated.workspace, 'preserve.txt'), 'Recreated by another process\n');
+  const recreated = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(recreated.state, 'skipped');
+  assert.match(recreated.reason, /has been recreated/);
+  assert.equal(existsSync(join(isolated.workspace, 'preserve.txt')), true);
+  assert.equal(ledger.workspaceCleanup(job.id).state, 'removed');
+  assert.equal((await cleanupWorkspace(config, ledger, job.id, { execute: true })).state, 'skipped');
+});
+test('workspace GC retains unfinished tasks, dirty source, ignored files, local branches and missing evidence', async t => {
+  const { config, ledger, job, isolated, artifact } = await deliveredWorkspace(t);
+  const check = async pattern => {
+    const result = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+    assert.equal(result.state, 'skipped', json(result));
+    assert.match(result.reason, pattern);
+    assert.equal(existsSync(isolated.workspace), true);
+  };
+  ledger.moveJob(job.id, 'completed', 'blocked');
+  await check(/not completed/);
+  ledger.moveJob(job.id, 'blocked', 'completed');
+  writeFileSync(join(isolated.workspace, 'src', 'value.js'), 'uncommitted\n');
+  await check(/uncommitted/);
+  writeFileSync(join(isolated.workspace, 'src', 'value.js'), 'export const value = 1;\n');
+  const untracked = join(isolated.workspace, 'private.log');
+  writeFileSync(untracked, 'unpreserved evidence\n');
+  await check(/untracked/);
+  writeFileSync(join(isolated.workspace, '.git', 'info', 'exclude'), 'private.log\n');
+  await check(/ignored files/);
+  rmSync(untracked);
+  await command('git', ['branch', 'extra'], isolated.workspace);
+  await check(/additional local branches/);
+  await command('git', ['branch', '-d', 'extra'], isolated.workspace);
+  writeFileSync(join(isolated.workspace, 'src', 'value.js'), 'stashed\n');
+  await command('git', ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false',
+    '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'stash', 'push', '--quiet'], isolated.workspace);
+  await check(/stashed changes/);
+  await command('git', ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false',
+    'stash', 'pop', '--quiet'], isolated.workspace);
+  writeFileSync(join(isolated.workspace, 'src', 'value.js'), 'export const value = 1;\n');
+  const linkedWorktree = join(config.stateDirectory, 'linked-worktree');
+  await command('git', ['worktree', 'add', '--detach', linkedWorktree], isolated.workspace);
+  await check(/Other Git worktrees/);
+  await command('git', ['worktree', 'remove', linkedWorktree], isolated.workspace);
+  ledger.operation('pending-validation', job.id, 'validation', {});
+  await check(/unfinished operation/);
+  ledger.finishOperation('pending-validation', 'completed', {});
+  const owner = ledger.acquire('validation');
+  await check(/holds a lock/);
+  ledger.release('validation', owner);
+  const evidence = readFileSync(artifact);
+  rmSync(artifact);
+  await check(/evidence is missing/);
+  writeFileSync(artifact, evidence);
+  config.workspaceCleanup.retentionHours = 24;
+  await check(/retention period/);
+  assert.equal(ledger.status().locks.length, 0);
+});
+test('workspace GC refuses unpushed HEAD, a missing remote branch and primary-checkout redirection', async t => {
+  const { config, ledger, job, isolated, repo, root } = await deliveredWorkspace(t);
+  await command('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '--allow-empty', '--quiet', '-m', 'Unpushed change'], isolated.workspace);
+  const unpushed = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(unpushed.state, 'skipped');
+  assert.match(unpushed.reason, /HEAD differs/);
+  await command('git', ['checkout', '--detach', isolated.baseRevision], isolated.workspace);
+  const detached = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(detached.state, 'skipped');
+  assert.match(detached.reason, /HEAD is detached/);
+  assert.equal(existsSync(isolated.workspace), true);
+  assert.equal(ledger.job(job.id).state, 'completed');
+  await command('git', ['branch', '-f', `pilot/${job.id}`, isolated.baseRevision], isolated.workspace);
+  await command('git', ['checkout', `pilot/${job.id}`], isolated.workspace);
+  const remoteRevision = (await command('git', ['--git-dir', repo.remote,
+    '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit-tree', `${isolated.baseRevision}^{tree}`, '-p', isolated.baseRevision,
+    '-m', 'Remote-only change'], root)).stdout.trim();
+  await command('git', ['--git-dir', repo.remote, 'update-ref',
+    `refs/heads/pilot/${job.id}`, remoteRevision], root);
+  const advanced = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(advanced.state, 'skipped');
+  assert.match(advanced.reason, /Remote branch differs/);
+  await command('git', ['--git-dir', repo.remote, 'update-ref', '-d', `refs/heads/pilot/${job.id}`], root);
+  const absent = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(absent.state, 'skipped');
+  assert.match(absent.reason, /remote branch is missing/);
+  ledger.db.prepare('UPDATE jobs SET workspace=? WHERE id=?').run(repo.referenceCheckout, job.id);
+  const redirected = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(redirected.state, 'skipped');
+  assert.match(redirected.reason, /registered task path/);
+  assert.equal(existsSync(repo.referenceCheckout), true);
+  assert.equal(existsSync(isolated.workspace), true);
+  ledger.db.prepare('UPDATE jobs SET workspace=? WHERE id=?').run(isolated.workspace, job.id);
+  repo.remote = 'https://dev.azure.com/synthetic/project/_git/repo';
+  await command('git', ['remote', 'set-url', 'origin', repo.remote], isolated.workspace);
+  const authentication = await cleanupWorkspace(config, ledger, job.id, { execute: true }, {
+    getToken: async () => { throw new PilotError('blocked-auth', 'Synthetic authentication unavailable'); }
+  });
+  assert.equal(authentication.state, 'failed');
+  assert.equal(authentication.error.code, 'blocked-auth');
+  assert.equal(existsSync(isolated.workspace), true);
+});
+test('workspace GC refuses linked task paths and absent clones without a deletion receipt', async t => {
+  const { config, ledger, job, isolated, repo } = await deliveredWorkspace(t);
+  rmSync(isolated.workspace, { recursive: true, force: true });
+  const missing = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(missing.state, 'skipped');
+  assert.match(missing.reason, /missing without a cleanup receipt/);
+  symlinkSync(repo.referenceCheckout, isolated.workspace, process.platform === 'win32' ? 'junction' : 'dir');
+  const linked = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(linked.state, 'skipped');
+  assert.match(linked.reason, /contains a link/);
+  assert.equal(existsSync(join(repo.referenceCheckout, 'src', 'value.js')), true);
+});
+test('workspace GC cleans historical clones only when the copied base branch has no undelivered commits', async t => {
+  const { config, ledger, job, isolated, repo } = await deliveredWorkspace(t);
+  const copiedBranch = (await command('git', [
+    'symbolic-ref', '--short', 'HEAD'
+  ], repo.referenceCheckout)).stdout.trim();
+  await command('git', ['branch', copiedBranch, isolated.baseRevision], isolated.workspace);
+  const preview = await cleanupWorkspace(config, ledger, job.id);
+  assert.equal(preview.state, 'eligible', json(preview));
+  const unpublished = (await command('git', [
+    '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit-tree', `${isolated.baseRevision}^{tree}`, '-p', isolated.baseRevision,
+    '-m', 'Private base-branch commit'
+  ], isolated.workspace)).stdout.trim();
+  await command('git', ['branch', '-f', copiedBranch, unpublished], isolated.workspace);
+  const retained = await cleanupWorkspace(config, ledger, job.id, { execute: true });
+  assert.equal(retained.state, 'skipped');
+  assert.match(retained.reason, /Inherited base branch/);
+  assert.equal(existsSync(isolated.workspace), true);
+});
+test('automatic delivery cleanup honors opt-out, retains failure metadata and cleans terminal failed-validation drafts', async t => {
+  for (const mode of ['disabled', 'absent-policy', 'failure', 'retention', 'validation-failed']) {
+    await t.test(mode, async t => {
+      const { config, ledger, job, repo, root } = await fixture(t, 'authenticated-source', 'defect-fix');
+      config.activation.dispatch = true;
+      config.limits.maxAiCreditsPerSession = 1;
+      config.workspaceCleanup = { enabled: mode !== 'disabled', retentionHours: mode === 'retention' ? 24 : 0 };
+      if (mode === 'absent-policy') delete config.workspaceCleanup;
+      await command('git', ['init', '--bare', '--quiet', repo.remote], root);
+      const result = await dispatch(config, ledger, job.id, {
+        runModel: async (c, l, current, assignment, investigation, toolkit) => {
+          toolkit.write('src\\value.js', `export const value = ${mode === 'validation-failed' ? 3 : 2};\n`);
+          toolkit.finish({
+            outcome: 'propose-change', findings: 'Synthetic change',
+            title: 'Synthetic delivery', description: 'Fixture only'
+          });
+        },
+        createDraft: async (c, l, current, r, revision) => ({
+          url: 'https://example.invalid/draft/1', isDraft: true, headRevision: revision
+        }),
+        workspaceCleanup: mode === 'failure' ? {
+          remove: () => {
+            assert.equal(ledger.status().locks.some(lock => lock.name === 'dispatch'), true);
+            assert.equal(ledger.job(job.id).state, 'completed');
+            assert.equal(ledger.all('workerResult').length, 1);
+            throw new PilotError('cleanup-failed', 'Synthetic file lock prevents deletion');
+          }
+        } : undefined
+      });
+      assert.equal(result.outcome, mode === 'validation-failed' ? 'draft-pr-validation-failed' : 'draft-pr-validated');
+      assert.equal(ledger.job(job.id).state, 'completed');
+      assert.equal(existsSync(ledger.job(job.id).workspace), mode !== 'validation-failed');
+      if (mode === 'disabled' || mode === 'absent-policy') {
+        assert.equal(result.workspaceCleanup, undefined);
+        assert.equal(ledger.workspaceCleanup(job.id), null);
+      } else {
+        assert.equal(result.workspaceCleanup.state,
+          mode === 'failure' ? 'failed' : mode === 'retention' ? 'skipped' : 'removed', json(result.workspaceCleanup));
+        assert.equal(ledger.workspaceCleanup(job.id).state, result.workspaceCleanup.state);
+      }
+    });
+  }
+});
+test('workspace cleanup is opt-in and rejects invalid retention configuration', () => {
+  assert.deepEqual(workspaceCleanupPolicy({}), { enabled: false, retentionHours: 0 });
+  assert.throws(() => workspaceCleanupPolicy({
+    workspaceCleanup: { enabled: true, retentionHours: -1 }
+  }), /Invalid workspaceCleanupPolicy/);
+  assert.throws(() => workspaceCleanupPolicy({
+    workspaceCleanup: { enabled: 'yes', retentionHours: 0 }
+  }), /Invalid workspaceCleanupPolicy/);
+});
 test('interrupted worker persists blocked result and cannot relaunch', async t => {
   const { config, ledger, job } = await fixture(t, 'authenticated-source');
   config.activation.dispatch = true; config.limits.maxAiCreditsPerSession = 1;
@@ -1204,6 +1486,8 @@ test('interrupted worker persists blocked result and cannot relaunch', async t =
   assert.equal(ledger.job(job.id).state, 'blocked');
   const result = ledger.all('workerResult')[0];
   assert.equal(result.outcome, 'blocked');
+  assert.equal(existsSync(ledger.job(job.id).workspace), true);
+  assert.equal(ledger.workspaceCleanup(job.id), null);
   assert.match(result.blocker.reason, /reauthentication/);
   assert.equal(result.toolUsage.used, 1);
   assert.deepEqual(result.toolUsage.rounds, [{

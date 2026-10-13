@@ -456,6 +456,59 @@ clearly marked failed Draft PR under the configured policy. Merge is always
 prohibited. Offline CI injects external model/PR boundaries and performs no
 network access, push or PR creation.
 
+### Authoring workspace lifecycle
+
+Local tasks use independent clones under
+`<stateDirectory>/workspaces/<session_id>`, not shared Git worktrees. Automatic
+cleanup is disabled by default, including when the configuration omits
+`workspaceCleanup`. When explicitly enabled, after a Draft PR delivery receipt
+is persisted, the task completes and releases its dispatch lock, the controller
+attempts to remove its authoring clone. This also applies to a failed-validation
+Draft PR after all repair rounds finish.
+Blocked tasks and tasks without a complete delivery receipt retain their clones.
+Hosted execution does not create a local clone to clean.
+
+The optional configuration controls automatic cleanup:
+
+```json
+"workspaceCleanup": { "enabled": false, "retentionHours": 0 }
+```
+
+Complete a controlled live smoke test in the approved environment before setting
+`enabled` to `true`: preview an explicitly disposable, completed delivery, verify
+the intended directory and remote commit, execute cleanup with only that
+candidate eligible, and confirm that the PR, evidence, primary checkout and
+caches remain intact. Never enable live cleanup using unresolved example settings.
+
+A positive `retentionHours` retains the clone until that interval has passed
+since delivery; there is no background cleanup scheduler. Manual GC remains
+available even when automatic cleanup is disabled. Run it for controlled
+validation, delayed cleanup, historical clones or retryable deletion failures.
+Preview is the default:
+
+```powershell
+npm run pilot -- workspace-gc --config .\pilot.local.json
+npm run pilot -- workspace-gc --config .\pilot.local.json --execute
+```
+
+GC checks only ledger-registered task directories. It takes controller locks,
+requires a completed task with no unfinished operations, checks preserved
+validation artifacts, and verifies that the remote task branch still points to
+the delivered commit. Missing or changed remote branches, authentication
+failures, detached HEAD, modified/untracked/ignored files, stashes, additional local branches
+or linked Git worktrees prevent deletion. Historical clones may retain a copied
+base branch only if its commits are included in the delivered revision.
+Linked directories, primary checkouts and paths outside the exact registered
+task directory are never removed.
+
+Cleanup results are recorded separately in the ledger and exposed by `status`.
+A cleanup failure does not change a successful PR delivery into a failed task;
+manual GC reports failures separately. An interrupted or partially deleted clone
+is retained if safety checks cannot be satisfied. Remote PRs and branches,
+evidence, delivery receipts, the ledger, primary checkouts and prepared
+dependency/compile caches are preserved. This repository does not restore
+delivered workspaces, review PRs or merge them.
+
 ### FILTER-to-proposer handoff
 
 `submit-filter-handoff` is the production bridge from the complete-record

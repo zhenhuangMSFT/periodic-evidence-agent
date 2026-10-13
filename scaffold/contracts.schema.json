@@ -127,6 +127,38 @@
         "validationGates": { "$ref": "#/$defs/texts" }
       }
     },
+    "workspaceCleanupPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "retentionHours"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "retentionHours": { "type": "number", "minimum": 0 }
+      }
+    },
+    "workspaceCleanupResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["jobId", "workspace", "state", "reason", "checkedAt"],
+      "properties": {
+        "jobId": { "$ref": "#/$defs/text" },
+        "workspace": { "$ref": "#/$defs/nullableText" },
+        "state": { "enum": ["eligible", "skipped", "deleting", "removed", "failed"] },
+        "reason": { "$ref": "#/$defs/text" },
+        "checkedAt": { "$ref": "#/$defs/utc" },
+        "resultId": { "$ref": "#/$defs/text" },
+        "sourceRevision": { "$ref": "#/$defs/text" },
+        "sourceRef": { "$ref": "#/$defs/text" },
+        "remote": { "$ref": "#/$defs/text" },
+        "draftPR": { "$ref": "#/$defs/text" },
+        "error": {
+          "type": "object", "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "$ref": "#/$defs/text" },
+            "message": { "$ref": "#/$defs/text" }
+          }
+        }
+      }
+    },
     "configuration": {
       "type": "object", "additionalProperties": false,
       "required": ["recordType", "schemaVersion", "profileId", "activationEnabled", "host", "identity", "schedule", "window", "state", "scopes", "sources", "followUp", "limits", "reviewMethod", "exclusions", "repoRegistry", "permissions", "unresolved"],
@@ -135,6 +167,7 @@
         "schemaVersion": { "const": "1.0" },
         "profileId": { "$ref": "#/$defs/text" },
         "activationEnabled": { "const": false },
+        "workspaceCleanup": { "$ref": "#/$defs/workspaceCleanupPolicy" },
         "host": {
           "type": "object", "additionalProperties": false,
           "required": ["coordinator", "workerDefault", "agencyStatus"],
@@ -948,6 +981,7 @@
             }
           ]
         },
+        "workspaceCleanup": { "$ref": "#/$defs/workspaceCleanupResult" },
         "blocker": {
           "anyOf": [
             { "type": "null" },
