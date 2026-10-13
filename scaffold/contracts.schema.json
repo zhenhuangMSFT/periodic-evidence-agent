@@ -980,6 +980,7 @@
                 "pilot_search": { "type": "integer", "minimum": 0 },
                 "pilot_read": { "type": "integer", "minimum": 0 },
                 "pilot_write": { "type": "integer", "minimum": 0 },
+                "pilot_replace_lines": { "type": "integer", "minimum": 0 },
                 "pilot_finish": { "type": "integer", "minimum": 0 }
               }
             },

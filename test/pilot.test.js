@@ -797,8 +797,18 @@ test('worker file callbacks reject traversal, alternate streams, protected paths
   assert.ok(existsSync(join(workspace, 'src', 'new.js')));
   assert.ok(!existsSync(join(repo.referenceCheckout, 'src', 'new.js')));
   assert.match(tools.read('src\\value.js', 1, 1), /value = 1/);
-  assert.ok((await tools.search('value = 1', 'src')).some(match =>
-    match.includes('src/value.js')));
+  tools.replaceLines('src\\value.js', 1, 1,
+    'export const value = 1;', 'export const value = 3;');
+  assert.equal(tools.read('src\\value.js', 1, 1), 'export const value = 3;');
+  assert.throws(() => tools.replaceLines('src\\value.js', 1, 1,
+    'export const value = 1;', 'bad'), /does not match/);
+  tools.repo.allowedWritePrefixes = ['src/value.js'];
+  tools.replaceLines('src\\value.js', 1, 1,
+    'export const value = 3;', 'export const value = 4;');
+  assert.equal(tools.read('src\\value.js', 1, 1), 'export const value = 4;');
+  assert.throws(() => tools.write('src\\another.js', 'bad'), /prefixes/);
+  assert.equal((await tools.search('value = 1', 'src')).some(match =>
+    match.includes('src/value.js')), false);
 });
 test('RCA-only workers cannot write and submitted workers cannot keep editing', async t => {
   const { config, assignment, job, repo } = await fixture(t);
