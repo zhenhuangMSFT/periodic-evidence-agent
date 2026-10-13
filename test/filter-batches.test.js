@@ -597,6 +597,18 @@ test('selected FILTER evidence prepares the real proposer assignment without a f
   ], { encoding: 'utf8' });
   assert.equal(cli.status, 0, cli.stderr);
   assert.equal(JSON.parse(cli.stdout).assignment.id, preparedHandoff.assignment.id);
+  const defectConfig = structuredClone(s.config);
+  defectConfig.stateDirectory = join(s.root, 'defect-state');
+  const defectLedger = new Ledger(defectConfig.stateDirectory);
+  defectLedger.qualify(skillQualificationId('target-repo', 'target-integration'),
+    ledger.qualification(skillQualificationId('target-repo', 'target-integration')));
+  s.cleanup.push(() => defectLedger.close());
+  const defectHandoff = prepareFilterProposerHandoff(
+    defectConfig, defectLedger, input, { intent: 'defect-fix' });
+  assert.equal(defectHandoff.assignment.intent, 'defect-fix');
+  assert.equal(defectHandoff.assignment.skillBindingId, undefined);
+  assert.match(defectHandoff.investigation.nextAction, /fix the production behavior/);
+  assert.equal(defectHandoff.job.state, 'prepared');
   ledger.qualify(skillQualificationId('target-repo', 'target-integration'), {
     ...ledger.qualification(skillQualificationId('target-repo', 'target-integration')),
     baseRevision: 'c'.repeat(40)

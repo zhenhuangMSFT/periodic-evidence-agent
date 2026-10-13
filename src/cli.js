@@ -69,8 +69,8 @@ const help = `Local evidence pilot (live operations disabled by default)
   node src\\cli.js pr-review-verify --repo OWNER/REPO --pr NUMBER
   node src\\cli.js submit-reviewed-handoff --file reviewed-handoff.json --config pilot.local.json --prepare
   node src\\cli.js submit-reviewed-handoff --file reviewed-handoff.json --config pilot.local.json --execute --authorize-synthetic --authorize-commit --authorize-push --authorize-draft-pr
-  node src\\cli.js submit-filter-handoff --file filter-handoff.json --config pilot.local.json --prepare
-  node src\\cli.js submit-filter-handoff --file filter-handoff.json --config pilot.local.json --execute --authorize-commit --authorize-push --authorize-draft-pr
+  node src\\cli.js submit-filter-handoff --file filter-handoff.json --config pilot.local.json --prepare [--intent improvement|defect-fix]
+  node src\\cli.js submit-filter-handoff --file filter-handoff.json --config pilot.local.json --execute [--intent improvement|defect-fix] --authorize-commit --authorize-push --authorize-draft-pr
   node src\\cli.js status [--config pilot.local.json]
   node src\\cli.js workspace-gc --config pilot.local.json [--execute]
   node src\\cli.js doctor
@@ -385,7 +385,11 @@ try {
       case 'submit-filter-handoff': {
         requireThat(args.includes('--prepare') !== args.includes('--execute'),
           `${action} requires exactly one of --prepare or --execute`);
+        const intent = option('--intent') ?? 'improvement';
+        requireThat(['improvement', 'defect-fix'].includes(intent),
+          `${action} --intent must be improvement or defect-fix`);
         result = await acceptFilterProposerHandoff(config, ledger, input(), {
+          intent,
           execute: args.includes('--execute'),
           authorizeCommit: args.includes('--authorize-commit'),
           authorizePush: args.includes('--authorize-push'),
