@@ -6,16 +6,32 @@ import { configAt } from '../src/common.js';
 import { beginApp, openApp, appendApp, unavailableApp, appStatus, listAppRuns } from '../src/app-native.js';
 import { principalPath, channelRoot, messageSelect } from '../src/runtime.js';
 import { area, wiql } from '../src/sources.js';
+import { runDemoStages } from './demo-stages.mjs';
 
 // Fixed fixtures use the offline receipt importer, never a transport or SDK client.
 const config = configAt(fileURLToPath(new URL('../pilot.example.json', import.meta.url)));
 assert.deepEqual(config.activation, { collect: false, review: false, dispatch: false });
 assert.equal(config.schedule.enabled, false);
 assert.match(config.identity.designatedUser, /@example\.invalid$/);
+if (process.platform === 'win32')
+  assert.ok(process.env.PATHEXT?.split(';').some(value => value.toLowerCase() === '.exe'),
+    'The Windows demo requires PATHEXT including .EXE so native validation actually runs');
 globalThis.fetch = () => { throw new Error('Network calls are forbidden in the synthetic demo'); };
 const stateRoot = resolve('.state');
 mkdirSync(stateRoot, { recursive: true });
 config.stateDirectory = mkdtempSync(join(stateRoot, 'demo-'));
+// Child Git commands must not inherit credentials, hooks, signing or non-file transports.
+for (const key of Object.keys(process.env)) if (/^GIT_/i.test(key)) delete process.env[key];
+const gitConfig = join(config.stateDirectory, 'empty.gitconfig');
+writeFileSync(gitConfig, '');
+const home = join(config.stateDirectory, 'tool-home');
+const appData = join(home, 'AppData', 'Roaming'), localAppData = join(home, 'AppData', 'Local');
+mkdirSync(appData, { recursive: true });
+mkdirSync(localAppData, { recursive: true });
+Object.assign(process.env, {
+  GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: gitConfig, GIT_TERMINAL_PROMPT: '0',
+  GIT_ALLOW_PROTOCOL: 'file', HOME: home, USERPROFILE: home, APPDATA: appData, LOCALAPPDATA: localAppData
+});
 config.statePolicy.accessApproved = true;
 config.sources.ado = { enabled: true, scopeApproved: true };
 config.sources.workiq.enabled = true;
@@ -95,9 +111,12 @@ try {
   assert.equal(status.modelCallsByHelper, 0);
   assert.equal(status.nativeSessionLaunchesByHelper, 0);
   assert.equal(status.sourceWritesByHelper, 0);
+  const workflow = await runDemoStages(config,
+    [{ ledgerPath: join(ledger.directory, 'ledger.sqlite'), runId }]);
   console.log(JSON.stringify({ result: 'synthetic-demo-passed', provenance: 'synthetic', passes,
-    uniqueEvidence: 3, overallCollectionState: status.state, workers: 0, scheduleEnabled: false,
-    stateDirectory: config.stateDirectory, configPath, summaryPath: status.summaryPath }, null, 2));
+    uniqueEvidence: 3, overallCollectionState: status.state, collectionWorkers: 0, scheduleEnabled: false,
+    stateDirectory: config.stateDirectory, configPath, summaryPath: status.summaryPath,
+    workflow }, null, 2));
 } finally {
   ledger?.close();
 }

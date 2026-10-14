@@ -20,6 +20,13 @@ contract. [Held Stage2 handoffs](APP-NATIVE.md#held-stage2-coverage-handoff) req
 the installed coverage-analysis skill and pinned reference, read source ledgers
 read-only, and cannot authorize product dispatch.
 
+[Bounded one-shot controls](ONE-SHOT.md) add coordinator-callable aggregate
+collection/FILTER reservations, offline recovery and complete accepted-cohort
+release to the existing helpers. They preserve authenticated WorkIQ provenance
+in collection-only storage and keep saved replay distinct. The coordinating host
+still supplies the authorized external FILTER executor; this is not a standalone
+service or qualified unattended end-to-end run.
+
 ## Account-free quick start
 
 Prerequisites: **Node.js 24 LTS**, npm and Git on PATH. Windows PowerShell is
@@ -94,7 +101,10 @@ exact base revisions, repository skill paths and skill content fingerprints.
 It does not install product-repository dependencies, authenticate accounts,
 enable routing/write permissions or create PRs.
 
-The demo prints JSON with these stable results (paths/timestamps vary):
+### Offline demo coverage
+
+The demo prints JSON with these stable collection fields (excerpt; paths,
+timestamps and generated fixture commits vary):
 
 ```json
 {
@@ -108,7 +118,7 @@ The demo prints JSON with these stable results (paths/timestamps vary):
   ],
   "uniqueEvidence": 3,
   "overallCollectionState": "partial-or-blocked",
-  "workers": 0,
+  "collectionWorkers": 0,
   "scheduleEnabled": false
 }
 ```
@@ -117,10 +127,40 @@ The demo prints JSON with these stable results (paths/timestamps vary):
 dry run. IcM deliberately stays unavailable; unknown coverage is not zero.
 The demo imports a root and an in-window reply to an older root, replays a batch
 without duplicates, then closes/reopens the ledger. It checks synthetic provenance,
-cursor completeness and absence of dispatch. Each invocation creates only its
-own disposable `.state\demo-*\` directory inside the checkout and returns that
-exact directory and summary path. To clean up, remove only the specific demo
-directory printed by that invocation, never the whole `.state` tree.
+cursor completeness and absence of dispatch **from that incomplete collection**.
+It then exercises FILTER and a separately authorized synthetic proposer fixture:
+
+| Stage | Required assertions before the demo can pass |
+|---|---|
+| FILTER | Pack all three records into two complete-context batches; reject missing sharing approval and insufficient batch budget; validate exact payload and detail membership; consolidate duplicate candidates across batches and select the higher-ranked gap. |
+| FILTER negative cases | Missing, partial or conflicting results cannot select a candidate; stale payloads and omitted details are rejected; complete no-candidate results remain unselected. No provider execution or semantic-analysis qualification is claimed. |
+| Synthetic handoff | Direct production handoff of synthetic collection evidence is rejected. A new, explicitly synthetic `reviewed-handoff-v1` fixture pins the selected candidate and original manifest/result hashes without changing the collection ledger. Missing synthetic/commit/push/draft authorization is rejected before preparing a job. |
+| Local proposer | Load a qualified skill from a disposable Git repository, enforce edit bounds, deterministically author a test of the fixture's real selection function, commit locally and execute real behavior and syntax gates in isolated validation checkouts. |
+| Publication guards and recovery | An intentionally failing assertion and a separately injected stale-head result must both block before publication. Only the passing exact-head case reaches mocked push/draft callbacks. Reopening each ledger must still reject duplicate dispatch. |
+
+`workflow.filter` reports the held structural result, not a qualified fresh
+execution cohort: the original source coverage remains incomplete.
+`workflow.proposer` reports three isolated fixture attempts (failed validation,
+stale head, success), their real gate artifacts and simulated publication counts.
+The successful controller outcome is `draft-pr-validated`, but its draft URL is
+`example.invalid`: **no model, source service, product repository, real push or
+real PR is used**. Deterministic FILTER analysis/token counting and model authoring
+are fixtures; existing controller, ledger, skill, Git and validation APIs run.
+This is not unattended live E2E qualification or a bypass of the fresh-cohort guard.
+
+Each invocation writes only its own disposable `.state\demo-*\` directory inside
+the checkout, including the original collection summary, FILTER artifacts,
+fixture checkouts and `workflow-summary.json`. The example and saved collection
+config remain inert; synthetic dispatch is enabled only in an in-memory fixture
+configuration. Node.js 24+, Git and (on Windows) PowerShell 7.3+ are required.
+Windows must retain `PATHEXT` including `.EXE`; the demo rejects its absence and
+also requires actual behavior-test output, not merely a zero process exit.
+The production Windows native runner likewise fails closed on missing/empty or
+unusable `PATHEXT`, requires application resolution and a process exit code,
+and preserves legitimate silent successful commands. It does not invent
+environment defaults or treat nonempty output as proof of success.
+To clean up, remove only the specific demo directory printed by that invocation,
+never the whole `.state` tree.
 
 ## Independent agents and contracts
 
@@ -1032,7 +1072,9 @@ Before adding a remote or pushing:
    email. Removing a file from HEAD does not remove it from history; do not
    publish unsuitable history or rewrite it without explicit authorization.
 
-No remote is created and nothing is pushed by installation, tests, demo or CI.
+No live publication remote is created and nothing is pushed to a live remote by
+installation, tests, demo or CI. The demo uses disposable local Git checkouts and
+mocked publication; some controller tests push only to temporary local bare repos.
 Do not send the entire working directory as a zip. After review, use Git's
 committed tree/export so ignored personal files cannot be included accidentally.
 Colleagues must configure their own approved identity/scopes/authentication.

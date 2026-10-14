@@ -239,6 +239,14 @@ production assignment budget or schedule anything. Source writes are absent.
 Future automation belongs to the independent agents and remains **disabled**:
 same-session automation is neither implemented nor the target architecture.
 
+The optional [one-shot controls](ONE-SHOT.md) add bounded sequential collection
+and accepted-cohort release operations callable by that existing coordinator;
+they do not enable recurring automation or replace host orchestration.
+Collection-only storage remains separate from proposer state. Real
+`workiq-cli-verified` captures are not synthetic merely because their source run
+uses `dryRun:true`; the separate authorized FILTER handoff preserves provenance
+without enabling in-run review or dispatch.
+
 ## Entry points
 
 Run from the cloned project root. Commands accept `--config <path>`; otherwise

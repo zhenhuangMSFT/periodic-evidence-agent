@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { nativeCommand } from '../src/native-command.js';
 import { minimalEnvironment, command } from '../src/workers.js';
 
@@ -26,6 +27,71 @@ test('contained native command preserves arguments, cwd, output and environment 
     assert.deepEqual({ ...observed, cwd: root }, { args, cwd: root, marker: 'synthetic', requestPresent: false });
     assert.equal(result.stderr, '');
   });
+
+for (const pathExt of [undefined, '', ' ', '.CMD;.BAT']) {
+  test(`native launch rejects unusable PATHEXT (${JSON.stringify(pathExt)}) before execution`,
+    { skip: process.platform !== 'win32' }, async t => {
+      const root = fixture(t), marker = join(root, 'unexpected-launch');
+      const env = minimalEnvironment();
+      delete env.PATHEXT;
+      if (pathExt !== undefined) env.PATHEXT = pathExt;
+      await assert.rejects(nativeCommand(process.execPath,
+        ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)},'launched')`],
+        root, 15000, env), { code: 'blocked-native-environment' });
+      assert.equal(existsSync(marker), false);
+      assert.equal(env.PATHEXT, pathExt, 'The runner must not manufacture environment defaults');
+    });
+}
+
+test('direct supervisor also rejects missing PATHEXT without a success-shaped exit',
+  { skip: process.platform !== 'win32' }, async t => {
+    const root = fixture(t), marker = join(root, 'unexpected-launch');
+    const env = { ...minimalEnvironment(), PILOT_NATIVE_COMMAND: JSON.stringify({
+      executable: process.execPath,
+      args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)},'launched')`]
+    }) };
+    delete env.PATHEXT;
+    await assert.rejects(command('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+      fileURLToPath(new URL('../src/native-command.ps1', import.meta.url))], root, 15000, env),
+    error => error.code !== 0 && /requires PATHEXT including .EXE/.test(error.stderr));
+    assert.equal(existsSync(marker), false);
+  });
+
+for (const exitCode of [0, 23]) test(`native silent exit ${exitCode} requires actual execution`,
+  { skip: process.platform !== 'win32' }, async t => {
+    const root = fixture(t), marker = join(root, 'launched');
+    const env = { ...minimalEnvironment(), PATHEXT: '.com;.exe;.bat;.cmd' };
+    const run = nativeCommand(process.execPath,
+      ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)},'launched');process.exit(${exitCode})`],
+      root, 15000, env);
+    if (exitCode === 0) {
+      const output = await run;
+      assert.equal(output.stdout, ''); assert.equal(output.stderr, '');
+    } else {
+      await assert.rejects(run, error => error.code === exitCode && error.stdout === '' && error.stderr === '');
+    }
+    assert.equal(readFileSync(marker, 'utf8'), 'launched');
+  });
+
+for (const mode of ['missing', 'cmdlet', 'script', 'invalid-binary']) {
+  test(`native ${mode} resolution cannot substitute for an application launch`,
+    { skip: process.platform !== 'win32' }, async t => {
+      const root = fixture(t), marker = join(root, 'unexpected-script-launch');
+      let executable = join(root, 'missing.exe');
+      if (mode === 'cmdlet') executable = 'Write-Output';
+      if (mode === 'script') {
+        executable = join(root, 'not-native.ps1');
+        writeFileSync(executable, `Set-Content -LiteralPath '${marker.replaceAll("'", "''")}' -Value 'launched'; exit 0`);
+      }
+      if (mode === 'invalid-binary') {
+        executable = join(root, 'invalid.exe');
+        writeFileSync(executable, 'Not an executable image');
+      }
+      await assert.rejects(nativeCommand(executable, [], root, 15000, minimalEnvironment()),
+        error => error.code !== 0 && Boolean(error.stderr));
+      assert.equal(existsSync(marker), false);
+    });
+}
 
 for (const mode of ['timeout', 'nonzero-exit', 'success', 'output-overflow']) test(`native ${mode} drains owned descendants`,
   { skip: process.platform !== 'win32' }, async t => {

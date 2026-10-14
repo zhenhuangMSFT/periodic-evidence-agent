@@ -29,6 +29,12 @@ Selecting this role does not launch a model or grant execution permission. Quali
 hosted FILTER execution still requires the existing private transport and its
 explicit authorization; it is not a public CLI capability.
 
+The fresh [one-shot controls](../../../ONE-SHOT.md) expose
+`one-shot-filter-prepare` and `one-shot-filter-reserve` for separately approved
+local aggregate/task reservations **before** the host submits any FILTER work.
+They do not submit or observe provider jobs. Retain original reservations on
+uncertain outcomes and never turn historical execution into fresh authorization.
+
 ## Procedure
 
 For an already-reviewed, selected saved source, `agent filter replay-review`
@@ -66,6 +72,8 @@ overwriting a sealed handoff.
 ## Authority
 
 Do not collect new sources, prepare or claim product workers, modify product
-code, run product validation, publish, change activation or consume new provider
-budget. A held review remains held until the separate dispatch gates are met.
+code, run product validation, publish, change activation or consume unapproved
+provider budget. Local one-shot reservations require explicit approved limits;
+they grant no provider submission permission beyond the configured contract.
+A held review remains held until the separate dispatch gates are met.
 Instructions and facade operation routing are not OS permission boundaries.

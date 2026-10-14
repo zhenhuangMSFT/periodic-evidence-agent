@@ -25,6 +25,14 @@ and dispatch disabled. Label it saved-evidence import, not a fresh source read.
 Follow the [recorded handoff contract](../../../APP-NATIVE.md#recorded-source-role-handoff);
 the receipt preserves original provenance and never establishes full coverage.
 
+For an explicitly authorized fresh bounded cohort, use the
+[one-shot controls](../../../ONE-SHOT.md): `one-shot-begin`, `one-shot-collect`,
+`one-shot-status` and `one-shot-stop`. These call the existing collectors with
+aggregate full-pass reservations. Resume uncertain work through durable offline
+reconciliation, never another read. A cooperative stop may resume only pending
+passes within the original approval. The host still drives subsequent stages;
+complete collection ends held, not dispatched.
+
 ## Inputs and durable state
 
 Read [the app-native contract](../../../APP-NATIVE.md), the selected pilot

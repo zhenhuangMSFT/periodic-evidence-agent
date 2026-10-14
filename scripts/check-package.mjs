@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 
 const allowedRoots = /^(?:src\/|test\/|scripts\/|scaffold\/|\.github\/skills\/|\.github\/workflows\/)/;
-const allowedTop = new Set(['.gitignore', '.gitattributes', 'README.md', 'APP-NATIVE.md', 'AGENCY-EXECUTOR.md', 'EXECUTION-GUIDE.md', 'CONTRIBUTING.md',
+const allowedTop = new Set(['.gitignore', '.gitattributes', 'README.md', 'APP-NATIVE.md', 'AGENCY-EXECUTOR.md', 'EXECUTION-GUIDE.md', 'ONE-SHOT.md', 'CONTRIBUTING.md',
   'AGENTS.md', 'package.json', 'package-lock.json', 'pilot.example.json']);
 const forbiddenPath = /(?:^|\/)(?:\.state|node_modules|\.copilot|captures|receipts|session-state)(?:\/|$)|(?:^|\/)\.env(?:\.|$)|\.local\.json$|\.(?:sqlite|db)(?:-|$)|(?:-wal|-shm|\.log)$|(?:auth-support|support-evidence|parent-app.*receipts)/i;
 const patterns = [

@@ -31,6 +31,14 @@ A role selection, prepared assignment or `--production` flag is not permission
 to execute. Synthetic reviewed-handoff support cannot substitute for real
 source ingestion or an accepted real FILTER handoff.
 
+For a fresh bounded cohort, use
+[`one-shot-handoff --check|--execute`](../../../ONE-SHOT.md) instead of
+inferring acceptance from structural consolidation alone. It requires the exact
+complete collection receipt, pre-reserved cohort budgets and accepted immutable
+FILTER executions. Real authenticated collection-only WorkIQ captures keep
+their provenance through the separately authorized handoff. No-candidate ends
+without dispatch; partial coverage never counts as no-candidate success.
+
 ## Repository procedure
 
 Select only the configured assignment's owner procedure:
@@ -65,6 +73,10 @@ qualification on another source revision is not changed-case validation.
 Preserve failed and pre-model blocked attempts. Resume only through the existing
 reconciliation path and concrete continuation authorization. Never reset the
 ledger or blindly redispatch because no model call was recorded.
+The one-shot path permits one explicit `--resume-auth` only after a positively
+recorded pre-dispatch authentication block and supported remediation, while the
+same local assignment has no workspace, result or worker/provider operation.
+Unknown dispatch outcomes or a second auth failure remain blocked.
 
 For an already-authored candidate, use
 `agent proposer continue-local-validation --prepare|--execute` only under the

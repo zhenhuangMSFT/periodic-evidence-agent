@@ -43,6 +43,14 @@ helpers and their permission gates; they do not automatically advance stages.
 An operation-result envelope is not proof of role completion, complete-cohort
 acceptance or native validation. See [README.md](./README.md) for the interface.
 
+For the stricter fresh-cohort path, use the
+[bounded one-shot controls](ONE-SHOT.md). They coordinate the existing local
+collectors, reserve whole-cohort FILTER budgets before task reservation and
+gate one proposer on complete source plus accepted execution evidence. The
+existing Copilot session/host remains the orchestrator; external FILTER
+submission/observation, approvals and runtime qualification remain its
+responsibility. Legacy selected-case replay below keeps its original scope.
+
 ## 1. Clone and initialize the devbox
 
 Prerequisites are **Node.js 24+, npm and Git**. Windows native validation and
@@ -82,8 +90,15 @@ executes the offline checks and runs the synthetic demo. Omit the `--repo`
 selection only when setup of every configured skill-backed repository is intended.
 
 **Setup does not authenticate product feeds, install product dependencies,
-enable dispatch or create PRs.** `synthetic-demo-passed` means fixture
-assertions passed, not a live integration-test pass.
+enable production dispatch or create PRs.** `synthetic-demo-passed` means fixture
+assertions passed, not a live integration-test pass. The demo now includes real
+FILTER validation/consolidation and isolated local proposer fixture execution,
+with real Node test gates and failed-validation/stale-head/duplicate-dispatch
+checks. Model authoring and push/draft publication are deterministic mocks.
+The original partial synthetic collection is never promoted; proposer execution
+uses the existing explicitly authorized synthetic reviewed-handoff interface.
+See the [demo stage assertions](README.md#offline-demo-coverage) for the exact
+scope and output artifacts.
 
 Use `npm run setup:repos -- --repo office-agent` only when intentionally
 rerunning the repository layer without repeating dependency installation and
@@ -219,6 +234,13 @@ these reusable corrections when authoring that profile:
   Do not replace this with an uncontained shell or increase timeouts to mask
   leftover descendants. Model launchers use `localProposerEnvironment()`; native
   runners use their narrow environment and separate approved package auth.
+- Preserve the host's `PATHEXT` including `.EXE`. Missing, empty or unusable
+  values fail before native launch with `blocked-native-environment`; the runner
+  does not synthesize defaults. The supervisor resolves an application and
+  requires its process exit code, without requiring output from silent commands.
+  Restore the host environment and follow the existing explicit reconciliation
+  or continuation procedure; do not reset an attempted validation or retry it
+  just because the environment was corrected.
 - When invoking the native wrapper through a PowerShell function, pass the
   separator as the literal string `'--'`. Launch the wrapper with the pinned
   root Yarn tool environment, not plain `node`, so child root tools resolve:
