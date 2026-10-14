@@ -187,6 +187,7 @@ test('app native OA planning pins durable improvement, coverage plan and skill b
       id: 'oa-integration-test-core', capability: 'integration-test-authoring',
       skillPath: 'docs/skills/Integration-test-core/SKILL.md', enabled: true, qualification: 'qualified',
       requestedOutcomes: ['add-or-update-tests'],
+      allowedWritePrefixes: ['src'], requiresBehaviorCard: true,
       sideEffects: { commit: false, push: false, createDraftPR: false }
     }];
   } });

@@ -10,7 +10,7 @@ import {
   requireCompleteExclusionReview, requireEligibleImprovementInvestigation
 } from './review-decisions.js';
 import { resolveSkillBinding, skillQualificationId } from './repository-skills.js';
-import { dispatch, makeAssignment, makePlannedImprovementAssignment } from './workers.js';
+import { dispatch, makePlannedImprovementAssignment } from './workers.js';
 
 function priority(value) {
   if (value >= 90) return 'critical';
@@ -141,8 +141,8 @@ export function prepareFilterProposerHandoff(config, ledger, input, {
 } = {}) {
   requireThat(config.statePolicy.accessApproved === true,
     'FILTER proposer handoff requires approved local state storage', 'blocked-config');
-  requireThat(['improvement', 'defect-fix'].includes(intent),
-    'FILTER proposer handoff intent must be improvement or defect-fix', 'blocked-scope');
+  requireThat(intent === 'improvement',
+    'FILTER proposer handoff is test-only and cannot become a defect-fix assignment', 'blocked-scope');
   const validated = validateFilterProposerHandoff(config, input);
   const { binding, candidate, reviewedAt, reviewer, requestedOutcome, skill } = validated;
   const qualification = ledger.qualification(skillQualificationId(
@@ -198,11 +198,8 @@ export function prepareFilterProposerHandoff(config, ledger, input, {
           : {})
       }
     });
-    const assignment = intent === 'defect-fix'
-      ? makeAssignment(config, persistedInvestigation,
-        candidate.definition.repository, 'defect-fix')
-      : makePlannedImprovementAssignment(config, ledger,
-        persistedInvestigation, planned.testCoveragePlan.id, requestedOutcome);
+    const assignment = makePlannedImprovementAssignment(config, ledger,
+      persistedInvestigation, planned.testCoveragePlan.id, requestedOutcome);
     const job = ledger.job(assignment.id) ?? ledger.prepare(assignment);
     return {
       handoff: input, filter: binding, candidate,

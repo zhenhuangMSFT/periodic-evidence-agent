@@ -130,7 +130,7 @@
           "type": "array",
           "items": {
             "type": "object", "additionalProperties": false,
-            "required": ["id", "capability", "skillPath", "enabled", "qualification", "requestedOutcomes", "sideEffects"],
+            "required": ["id", "capability", "skillPath", "enabled", "qualification", "requestedOutcomes", "allowedWritePrefixes", "requiresBehaviorCard", "sideEffects"],
             "properties": {
               "id": { "$ref": "#/$defs/text" },
               "capability": { "$ref": "#/$defs/text" },
@@ -141,6 +141,8 @@
               "enabled": { "type": "boolean" },
               "qualification": { "enum": ["unqualified", "qualified"] },
               "requestedOutcomes": { "$ref": "#/$defs/texts" },
+              "allowedWritePrefixes": { "$ref": "#/$defs/texts" },
+              "requiresBehaviorCard": { "type": "boolean" },
               "sideEffects": {
                 "type": "object", "additionalProperties": false,
                 "required": ["commit", "push", "createDraftPR"],
@@ -707,6 +709,7 @@
         "testCoveragePlanVersion": { "type": "integer", "minimum": 1 },
         "skillBindingId": { "$ref": "#/$defs/text" },
         "skillInput": { "$ref": "#/$defs/declarativeE2ESpecBatch" },
+        "allowedWritePrefixes": { "$ref": "#/$defs/texts" },
         "skillQualification": {
           "type": "object", "additionalProperties": false,
           "required": ["qualificationId", "baseRevision", "skillSha256", "skillPath", "remote",
@@ -771,7 +774,7 @@
           "if": { "required": ["skillBindingId"] },
           "then": {
             "required": ["capability", "requestedOutcome", "improvementId", "improvementVersion",
-              "testCoveragePlanId", "testCoveragePlanVersion", "skillQualification"]
+              "testCoveragePlanId", "testCoveragePlanVersion", "allowedWritePrefixes", "skillQualification"]
           }
         }
       ]

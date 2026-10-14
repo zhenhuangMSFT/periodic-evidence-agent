@@ -17,7 +17,7 @@ import { followRelated } from '../src/followup.js';
 import { revisitTracked } from '../src/revisit.js';
 import { collect, acceptReview, report, latestEvidence, reconcile, tick, previousUtcDay, nextDailyWake, readinessFingerprint } from '../src/coordinator.js';
 import { validateSeed, restrictedSession, principalPath, unwrapWorkiq, verifyPrincipal, channelRoot, messageSelect, nextWorkiqPage, validateWorkiqPath, workiqRuntimeError, prepareWorkiq } from '../src/runtime.js';
-import { makeAssignment, makePlannedImprovementAssignment, WorkerTools, provision, checkoutEnvironment, hydrateValidationLfs, prepareValidation, preflightValidationAuthentication, runValidation, pushDraftBranch, createAdoDraft, command, minimalEnvironment, dispatch, repoFor } from '../src/workers.js';
+import { makeAssignment, makePlannedImprovementAssignment, WorkerTools, provision, checkoutEnvironment, hydrateValidationLfs, prepareValidation, preflightValidationAuthentication, runValidation, pushDraftBranch, createAdoDraft, command, minimalEnvironment, dispatch, repoFor, requireAllowedSkillChanges } from '../src/workers.js';
 import { recordAreaToImprove, recordTestCoveragePlan } from '../src/improvements.js';
 import { repositoryValidationContract, skillQualificationId } from '../src/repository-skills.js';
 import { outputPathFingerprint } from '../src/output-fingerprint.js';
@@ -803,7 +803,7 @@ test('worker file callbacks reject traversal, alternate streams, protected paths
   assert.equal(tools.read('src\\value.js', 1, 1), 'export const value = 3;');
   assert.throws(() => tools.replaceLines('src\\value.js', 1, 1,
     'export const value = 1;', 'bad'), /does not match/);
-  tools.repo.allowedWritePrefixes = ['src/value.js'];
+  tools.allowedWritePrefixes = ['src/value.js'];
   tools.replaceLines('src\\value.js', 1, 1,
     'export const value = 3;', 'export const value = 4;');
   assert.equal(tools.read('src\\value.js', 1, 1), 'export const value = 4;');
@@ -2066,6 +2066,7 @@ test('planned OA skill path creates a source-bound validated draft result throug
     id: 'oa-integration-test-core', capability: 'integration-test-authoring',
     skillPath: 'docs/skills/Integration-test-core/SKILL.md', enabled: true, qualification: 'qualified',
     requestedOutcomes: ['add-or-update-tests'],
+    allowedWritePrefixes: ['test'], requiresBehaviorCard: true,
     sideEffects: { commit: false, push: false, createDraftPR: false }
   }];
   repo.validationGates = [{
@@ -2118,7 +2119,8 @@ test('planned OA skill path creates a source-bound validated draft result throug
   const rejected = new WorkerTools(ctx.config, assignment, repo.referenceCheckout, {
     binding: repo.skillBindings[0],
     skillPath: repo.skillBindings[0].skillPath,
-    skillRevision: baseRevision
+    skillRevision: baseRevision,
+    allowedWritePrefixes: ['test']
   });
   assert.throws(() => rejected.finish({
     outcome: 'propose-change', findings: 'Skill could not safely complete.',
@@ -2133,15 +2135,17 @@ test('planned OA skill path creates a source-bound validated draft result throug
   const needsDecision = new WorkerTools(ctx.config, assignment, repo.referenceCheckout, {
     binding: repo.skillBindings[0],
     skillPath: repo.skillBindings[0].skillPath,
-    skillRevision: baseRevision
+    skillRevision: baseRevision,
+    allowedWritePrefixes: ['test']
   });
   assert.throws(() => needsDecision.finish({
     outcome: 'propose-change', findings: 'Skill needs a human decision.',
     title: 'Must not publish', description: 'Must not publish',
     skillResult: {
       status: 'succeeded', classification: 'missing-coverage',
-      changedFiles: ['test/behavior.test.js'], testsAddedOrUpdated: ['OA behavior'],
-      behaviorCardsAddedOrUpdated: [], unknowns: [], needsHumanDecision: true
+      changedFiles: ['test/behavior-card.md', 'test/behavior.test.js'],
+      testsAddedOrUpdated: ['OA behavior'],
+      behaviorCardsAddedOrUpdated: ['test/behavior-card.md'], unknowns: [], needsHumanDecision: true
     }
   }), /Only a successful repository skill result/);
   assert.equal(needsDecision.proposal, null);
@@ -2153,16 +2157,21 @@ test('planned OA skill path creates a source-bound validated draft result throug
     runModel: async (config, ledger, current, currentAssignment, currentInvestigation, toolkit, loadedSkill) => {
       assert.match(loadedSkill.instructions, /Synthetic OA skill/);
       assert.equal(loadedSkill.skillRevision, baseRevision);
+      assert.throws(() => toolkit.write('src\\value.js', 'export const value = 2;\n'),
+        /outside approved edit prefixes/);
       toolkit.write('test\\behavior.test.js',
         "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('OA behavior', () => assert.equal(1, 1));\n");
+      toolkit.write('test\\behavior.behavior-card.md', '# OA behavior\n\nSynthetic behavior card.\n');
       toolkit.finish({
         outcome: 'propose-change', findings: 'Added focused OA integration coverage.',
         title: '[Periodic Evidence Agent Canary] Add OA behavior coverage',
         description: 'Synthetic draft used to verify the source-bound OA skill pipeline.',
         skillResult: {
           status: 'succeeded', classification: 'missing-coverage',
-          changedFiles: ['test/behavior.test.js'], testsAddedOrUpdated: ['OA behavior'],
-          behaviorCardsAddedOrUpdated: [], unknowns: [], needsHumanDecision: false
+          changedFiles: ['test/behavior.behavior-card.md', 'test/behavior.test.js'],
+          testsAddedOrUpdated: ['OA behavior'],
+          behaviorCardsAddedOrUpdated: ['test/behavior.behavior-card.md'],
+          unknowns: [], needsHumanDecision: false
         }
       });
     },
@@ -2172,7 +2181,8 @@ test('planned OA skill path creates a source-bound validated draft result throug
   });
   assert.equal(result.outcome, 'draft-pr-validated');
   assert.equal(result.skillExecution.bindingId, 'oa-integration-test-core');
-  assert.deepEqual(result.skillExecution.changedFiles, ['test/behavior.test.js']);
+  assert.deepEqual(result.skillExecution.changedFiles,
+    ['test/behavior.behavior-card.md', 'test/behavior.test.js']);
   assert.equal(result.validation[0].sourceRevision, result.sourceRevision);
   assert.equal(result.draftPR.headRevision, result.sourceRevision);
 });
@@ -2459,6 +2469,18 @@ test('workspace cleanup is opt-in and rejects invalid retention configuration', 
   assert.throws(() => workspaceCleanupPolicy({
     workspaceCleanup: { enabled: 'yes', retentionHours: 0 }
   }), /Invalid workspaceCleanupPolicy/);
+});
+test('test-only skill diff gate rejects production paths including rename sources', () => {
+  assert.doesNotThrow(() => requireAllowedSkillChanges(
+    ['test/behavior.behavior-card.md', 'test/behavior.test.js'], ['test'],
+    ['test/behavior.behavior-card.md', 'test/behavior.test.js']));
+  assert.throws(() => requireAllowedSkillChanges(
+    ['test/behavior.test.js', 'src/app.js'], ['test']),
+  /src\/app\.js/);
+  assert.throws(() => requireAllowedSkillChanges(
+    ['test/behavior.test.js'], ['test'],
+    ['test/behavior-card.md', 'test/behavior.test.js']),
+  /does not match the workspace diff/);
 });
 test('interrupted worker persists blocked result and cannot relaunch', async t => {
   const { config, ledger, job } = await fixture(t, 'authenticated-source');

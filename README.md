@@ -296,7 +296,10 @@ distinguishes linked coverage, a confirmed coverage gap and an unresolved
 search. A planned assignment pins both record versions, capability, requested
 outcome and one qualified repository skill binding. Repository skills execute
 from the exact isolated source revision and cannot grant themselves shell,
-network, commit, push or PR authority.
+network, commit, push or PR authority. Each binding also declares a narrower
+write-prefix allowlist inside the repository bounds. The controller pins that
+allowlist into the assignment, applies it to every authoring and repair tool
+call, and verifies the complete base-to-candidate diff before commit and push.
 
 For OfficeAgent, the qualified router entry is
 `.github/skills/integration-test-authoring/SKILL.md`; it resolves an exact
@@ -388,7 +391,11 @@ existing pass-only publisher.
 
 The OA skill owns validation intent and failure interpretation: it selects the
 project runner, targeted tests, behavior-card checks and repair procedure. The
-controller owns execution and evidence. A validation gate may bind a versioned
+OfficeAgent integration-test binding is test-only: successful changes must
+report both focused tests and behavior-card updates. A failed test may enter
+the bounded repair loop, but the write boundary never expands to production
+code. Validation that remains failed is recorded as blocked without a push or
+Draft PR. The controller owns execution and evidence. A validation gate may bind a versioned
 pipeline script using `profilePath`, `profileSha256` and the `{profile}`
 argument placeholder. The controller verifies the profile hash before every
 run, executes it outside the model tool surface, records the hash in the
@@ -851,7 +858,9 @@ The ordinary live `dispatch` entrypoint continues to reject synthetic evidence.
 Only the controller's non-forgeable reviewed-handoff dispatch path accepts the
 explicitly authorized synthetic receipt. A repository worker may follow a
 repository-native skill to author changes, but neither the worker nor skill
-receives shell, Git, network or PR permissions.
+receives shell, Git, network or PR permissions. Synthetic controller fixtures
+verify the test-only write and diff gates without depending on a real incident
+remaining unresolved.
 
 After each authored revision, the controller commits it and runs the fixed
 approved validation gates at the exact commit. Profiles without a valid staged

@@ -21,10 +21,12 @@ function setup(t) {
     id: 'office-src', owner: 'oa-owner', routingApproved: true,
     referenceCheckout: workspace, baseRef: 'main',
     remote: 'https://office.visualstudio.com/ISS/_git/OfficeAgent',
+    allowedWritePrefixes: ['test'],
     skillBindings: [{
       id: 'oa-integration-test-core', capability: 'integration-test-authoring',
       skillPath: 'docs/skills/Integration-test-core/SKILL.md', enabled: true, qualification: 'qualified',
       requestedOutcomes: ['add-or-update-tests'],
+      allowedWritePrefixes: ['test'], requiresBehaviorCard: true,
       sideEffects: { commit: false, push: false, createDraftPR: false }
     }]
   }];
@@ -37,6 +39,7 @@ function setup(t) {
 }
 function qualification(config, assignment, revision, instructions = '# Synthetic OA integration skill\n') {
   const binding = config.repositories[0].skillBindings[0];
+  assignment.allowedWritePrefixes = [...binding.allowedWritePrefixes];
   const contract = repositoryValidationContract(config.repositories[0]);
   const receipt = {
     state: 'qualified-read-only', repoId: assignment.repoId, bindingId: assignment.skillBindingId,
@@ -230,12 +233,23 @@ test('skill result normalization is deterministic and rejects success-shaped emp
   const loaded = loadRepositorySkill(config, assignment, workspace, revision, receipt);
   const result = normalizeSkillResult(loaded, {
     status: 'succeeded', classification: 'missing-coverage',
-    changedFiles: ['test/new.test.js', 'test/new.test.js'],
-    testsAddedOrUpdated: ['new test'], behaviorCardsAddedOrUpdated: [],
+    changedFiles: ['test/new.test.js', 'test/new.test.js', 'test/new.behavior-card.md'],
+    testsAddedOrUpdated: ['new test'], behaviorCardsAddedOrUpdated: ['test/new.behavior-card.md'],
     unknowns: [], needsHumanDecision: false
   });
-  assert.deepEqual(result.changedFiles, ['test/new.test.js']);
+  assert.deepEqual(result.changedFiles, ['test/new.behavior-card.md', 'test/new.test.js']);
   assert.equal(result.bindingId, 'oa-integration-test-core');
+  assert.throws(() => normalizeSkillResult(loaded, {
+    status: 'succeeded', classification: 'missing-coverage',
+    changedFiles: ['test/new.test.js'], testsAddedOrUpdated: ['new test'],
+    behaviorCardsAddedOrUpdated: [], unknowns: [], needsHumanDecision: false
+  }), /behavior-card update/);
+  assert.throws(() => normalizeSkillResult(loaded, {
+    status: 'succeeded', classification: 'missing-coverage',
+    changedFiles: ['test/new.test.js'], testsAddedOrUpdated: ['new test'],
+    behaviorCardsAddedOrUpdated: ['test/new.behavior-card.md'],
+    unknowns: [], needsHumanDecision: false
+  }), /included in changedFiles/);
   assert.throws(() => normalizeSkillResult(loaded, {
     status: 'succeeded', classification: 'missing-coverage',
     changedFiles: [], testsAddedOrUpdated: [], behaviorCardsAddedOrUpdated: [],

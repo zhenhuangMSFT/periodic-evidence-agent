@@ -25,6 +25,7 @@ function setup(t) {
       id: 'oa-integration-test-core', capability: 'integration-test-authoring',
       skillPath: 'docs/skills/Integration-test-core/SKILL.md', enabled: true, qualification: 'qualified',
       requestedOutcomes: ['add-or-update-tests'],
+      allowedWritePrefixes: ['test'], requiresBehaviorCard: true,
       sideEffects: { commit: false, push: false, createDraftPR: false }
     }]
   }];

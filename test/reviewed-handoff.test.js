@@ -77,6 +77,8 @@ async function setup(t, { inputFormat = null } = {}) {
       enabled: true,
       qualification: 'qualified',
       requestedOutcomes: ['add-or-update-tests'],
+      allowedWritePrefixes: ['test'],
+      requiresBehaviorCard: true,
       sideEffects: { commit: true, push: true, createDraftPR: true }
     }]
   }];
@@ -393,6 +395,7 @@ test('authorized reviewed handoff reuses real dispatch with external boundaries 
         assert.match(skill.instructions, /Fixture integration-test skill/);
         toolkit.write('test\\behavior.test.js',
           "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('fixture behavior', () => assert.equal(1, 1));\n");
+        toolkit.write('test\\behavior-card.md', '# Fixture behavior\n');
         toolkit.finish({
           outcome: 'propose-change',
           findings: 'Added focused fixture coverage through the real reviewed-handoff controller.',
@@ -401,9 +404,9 @@ test('authorized reviewed handoff reuses real dispatch with external boundaries 
           skillResult: {
             status: 'succeeded',
             classification: 'missing-test-coverage',
-            changedFiles: ['test/behavior.test.js'],
+            changedFiles: ['test/behavior-card.md', 'test/behavior.test.js'],
             testsAddedOrUpdated: ['fixture behavior'],
-            behaviorCardsAddedOrUpdated: [],
+            behaviorCardsAddedOrUpdated: ['test/behavior-card.md'],
             unknowns: [],
             needsHumanDecision: false
           }
@@ -420,8 +423,8 @@ test('authorized reviewed handoff reuses real dispatch with external boundaries 
   assert.equal(executed.result.skillExecution.bindingId, 'oa-integration-test-core');
   assert.equal(executed.result.validation[0].sourceRevision, executed.result.sourceRevision);
   assert.equal(executed.result.draftPR.headRevision, executed.result.sourceRevision);
-  assert.equal(executed.result.toolUsage.used, 2);
-  assert.equal(executed.result.toolUsage.byTool.pilot_write, 1);
+  assert.equal(executed.result.toolUsage.used, 3);
+  assert.equal(executed.result.toolUsage.byTool.pilot_write, 2);
   assert.equal(executed.result.toolUsage.byTool.pilot_finish, 1);
 });
 
@@ -480,14 +483,16 @@ test('controller validation failures feed a bounded repository-skill repair loop
   assert.equal(executed.result.toolUsage.used, 5);
 });
 
-for (const repairBudget of [0, 1]) test(`exhausted repair budget ${repairBudget} blocks publication`, async t => {
+for (const repairBudget of [0, 1])
+test(`exhausted test-only repair budget ${repairBudget} blocks without push or Draft PR`, async t => {
   const { root, remote, config, ledger } = await setup(t);
   config.activation.dispatch = true;
   config.limits.maxAiCreditsPerSession = 1;
   config.limits.maxValidationRepairRounds = repairBudget;
   await command('git', ['init', '--bare', '--quiet', remote], root);
   let modelCalls = 0;
-  await assert.rejects(acceptReviewedHandoff(config, ledger, fixture, {
+  let draftCreated = false;
+  const executed = await acceptReviewedHandoff(config, ledger, fixture, {
     execute: true,
     authorizeSynthetic: true,
     authorizeCommit: true,
@@ -500,6 +505,7 @@ for (const repairBudget of [0, 1]) test(`exhausted repair budget ${repairBudget}
         assert.equal(authoring.round, modelCalls - 1);
         toolkit.write('test\\behavior.test.js',
           `import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('fixture behavior', () => assert.equal(1, ${authoring.round + 2}));\n`);
+        toolkit.write('test\\behavior-card.md', '# Fixture behavior\n');
         toolkit.finish({
           outcome: 'propose-change',
           findings: 'Added initial focused fixture coverage.',
@@ -508,24 +514,28 @@ for (const repairBudget of [0, 1]) test(`exhausted repair budget ${repairBudget}
           skillResult: {
             status: 'succeeded',
             classification: 'missing-test-coverage',
-            changedFiles: ['test/behavior.test.js'],
+            changedFiles: ['test/behavior-card.md', 'test/behavior.test.js'],
             testsAddedOrUpdated: ['fixture behavior'],
-            behaviorCardsAddedOrUpdated: [],
+            behaviorCardsAddedOrUpdated: ['test/behavior-card.md'],
             unknowns: [],
             needsHumanDecision: false
           }
         });
       },
       pushBranch: async () => assert.fail('failed validation must not push'),
-      createDraft: async () => assert.fail('failed validation must not create a draft')
+      createDraft: async () => {
+        draftCreated = true;
+        throw new Error('Draft creation must not run for failed test-only validation');
+      }
     }
-  }), /Every required gate must pass/);
+  });
   assert.equal(modelCalls, repairBudget + 1);
-  const result = ledger.all('workerResult').at(-1);
-  assert.equal(result.outcome, 'blocked');
-  assert.equal(result.draftPR, null);
-  assert.deepEqual(result.validation.map(item => item.status), ['failed']);
-  assert.equal(result.validationAttempts.length, repairBudget + 1);
+  assert.equal(executed.result.outcome, 'blocked');
+  assert.equal(executed.result.draftPR, null);
+  assert.equal(draftCreated, false);
+  assert.match(executed.result.blocker.reason, /production-code repair is prohibited/);
+  assert.deepEqual(executed.result.validation.map(item => item.status), ['failed']);
+  assert.equal(executed.result.validationAttempts.length, repairBudget + 1);
   assert.equal((await command('git', ['--git-dir', remote, 'for-each-ref', '--format=%(refname)'], root))
     .stdout.trim(), '');
 });
@@ -551,6 +561,7 @@ test(`${invalidResult} validation prevents push and Draft PR creation`, async t 
         modelCalls++;
         toolkit.write('test\\behavior.test.js',
           "import test from 'node:test';\ntest('fixture behavior', () => {});\n");
+        toolkit.write('test\\behavior-card.md', '# Fixture behavior\n');
         toolkit.finish({
           outcome: 'propose-change',
           findings: 'Added focused fixture coverage.',
@@ -559,9 +570,9 @@ test(`${invalidResult} validation prevents push and Draft PR creation`, async t 
           skillResult: {
             status: 'succeeded',
             classification: 'missing-test-coverage',
-            changedFiles: ['test/behavior.test.js'],
+            changedFiles: ['test/behavior-card.md', 'test/behavior.test.js'],
             testsAddedOrUpdated: ['fixture behavior'],
-            behaviorCardsAddedOrUpdated: [],
+            behaviorCardsAddedOrUpdated: ['test/behavior-card.md'],
             unknowns: [],
             needsHumanDecision: false
           }

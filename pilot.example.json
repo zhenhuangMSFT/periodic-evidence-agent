@@ -134,6 +134,8 @@
           "enabled": false,
           "qualification": "unqualified",
           "requestedOutcomes": ["add-or-update-tests", "investigate-failure"],
+          "allowedWritePrefixes": ["agents/office-agent/tests"],
+          "requiresBehaviorCard": true,
           "sideEffects": { "commit": false, "push": false, "createDraftPR": false }
         }
       ],

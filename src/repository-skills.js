@@ -25,6 +25,23 @@ export function normalizeSkillInput(binding, input) {
   return structuredClone(input);
 }
 
+function normalizedPrefix(prefix) {
+  requireThat(typeof prefix === 'string' && prefix.length > 0 && !isAbsolute(prefix) &&
+    !prefix.split(/[\\/]/).includes('..'), 'Repository skill write prefix is invalid', 'blocked-scope');
+  return prefix.replaceAll('\\', '/').replace(/^\.\/|\/$/g, '');
+}
+
+export function repositorySkillWritePrefixes(repo, binding) {
+  requireThat(Array.isArray(binding.allowedWritePrefixes) && binding.allowedWritePrefixes.length > 0,
+    `Repository skill binding ${binding.id} has no allowed write prefixes`, 'blocked-config');
+  const repositoryPrefixes = (repo.allowedWritePrefixes ?? []).map(normalizedPrefix);
+  const prefixes = [...new Set(binding.allowedWritePrefixes.map(normalizedPrefix))].sort();
+  requireThat(prefixes.every(prefix => repositoryPrefixes.some(allowed =>
+    prefix === allowed || prefix.startsWith(`${allowed}/`))),
+  `Repository skill binding ${binding.id} write prefixes exceed repository bounds`, 'blocked-scope');
+  return prefixes;
+}
+
 export function repositoryValidationContract(repo) {
   const version = repo.validationContractVersion ?? '1.0';
   const gates = (repo.validationGates ?? []).map(gate => ({
@@ -65,6 +82,9 @@ export function resolveSkillBinding(config, repoId, capability, bindingId = null
     !isAbsolute(binding.skillPath), `Repository skill binding ${binding.id} has an invalid path`, 'blocked-scope');
   requireThat(Array.isArray(binding.requestedOutcomes) && binding.requestedOutcomes.length > 0,
     `Repository skill binding ${binding.id} has no requested outcomes`);
+  repositorySkillWritePrefixes(repo, binding);
+  requireThat(typeof binding.requiresBehaviorCard === 'boolean',
+    `Repository skill binding ${binding.id} must declare behavior-card policy`, 'blocked-config');
   requireThat(binding.sideEffects && ['commit', 'push', 'createDraftPR'].every(key =>
     typeof binding.sideEffects[key] === 'boolean'), `Repository skill binding ${binding.id} lacks explicit side effects`);
   return { repo, binding };
@@ -114,6 +134,10 @@ export function loadRepositorySkill(config, assignment, workspace, sourceRevisio
   requireThat(qualification.validationContractVersion === contract.version &&
     qualification.validationContractSha256 === contract.sha256,
   'Repository validation contract changed after skill qualification', 'blocked-reconciliation');
+  const allowedWritePrefixes = repositorySkillWritePrefixes(
+    config.repositories.find(repo => repo.id === assignment.repoId), binding);
+  requireThat(json(allowedWritePrefixes) === json(assignment.allowedWritePrefixes),
+    'Repository skill write policy changed after assignment preparation', 'blocked-reconciliation');
   const path = boundedPath(workspace, binding.skillPath);
   requireThat(statSync(path).isFile() && statSync(path).size <= config.limits.maxFileBytes,
     'Repository skill exceeds the configured read limit', 'blocked-budget');
@@ -154,6 +178,7 @@ export function loadRepositorySkill(config, assignment, workspace, sourceRevisio
   return {
     binding,
     instructions: source.toString('utf8'),
+    allowedWritePrefixes,
     skillRevision: sourceRevision,
     skillPath: binding.skillPath.replaceAll('\\', '/')
   };
@@ -200,16 +225,32 @@ export function normalizeSkillResult(loaded, result) {
     bindingId: loaded.binding.id, capability: loaded.binding.capability,
     skillPath: loaded.skillPath, skillRevision: loaded.skillRevision,
     status: result.status, classification: result.classification ?? null,
-    changedFiles: [...new Set(result.changedFiles ?? [])].sort(),
+    changedFiles: [...new Set((result.changedFiles ?? []).map(path => path.replaceAll('\\', '/')))].sort(),
     testsAddedOrUpdated: [...new Set(result.testsAddedOrUpdated ?? [])].sort(),
-    behaviorCardsAddedOrUpdated: [...new Set(result.behaviorCardsAddedOrUpdated ?? [])].sort(),
+    behaviorCardsAddedOrUpdated: [...new Set((result.behaviorCardsAddedOrUpdated ?? [])
+      .map(path => path.replaceAll('\\', '/')))].sort(),
     unknowns: [...new Set(result.unknowns ?? [])].sort(),
     needsHumanDecision: result.needsHumanDecision
   };
+  const outsideBounds = normalized.changedFiles.filter(path =>
+    !loaded.allowedWritePrefixes.some(prefix => path === prefix || path.startsWith(`${prefix}/`)));
+  requireThat(outsideBounds.length === 0,
+    `Repository skill reported files outside its test-only bounds: ${outsideBounds.join(', ')}`,
+    'blocked-scope');
   if (normalized.status === 'succeeded' && normalized.changedFiles.length === 0 &&
       normalized.testsAddedOrUpdated.length === 0)
     requireThat(result.classification === 'existing-coverage',
       'A successful no-change skill result must identify existing coverage', 'blocked-result');
+  if (normalized.status === 'succeeded' && normalized.changedFiles.length > 0 &&
+      loaded.binding.requiresBehaviorCard) {
+    requireThat(normalized.behaviorCardsAddedOrUpdated.length > 0,
+      'Repository skill changes require a behavior-card update', 'blocked-result');
+    const unreportedCards = normalized.behaviorCardsAddedOrUpdated.filter(path =>
+      !normalized.changedFiles.includes(path));
+    requireThat(unreportedCards.length === 0,
+      `Behavior-card updates must be included in changedFiles: ${unreportedCards.join(', ')}`,
+      'blocked-result');
+  }
   return normalized;
 }
 

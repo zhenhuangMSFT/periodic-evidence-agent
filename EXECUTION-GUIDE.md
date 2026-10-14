@@ -416,6 +416,14 @@ npm run submit:filter-handoff -- `
 `--prepare` persists controller records and an assignment. It does not launch
 the product worker and is not execution authorization.
 
+FILTER proposer handoffs are test-only. The qualified skill binding pins a
+narrower write allowlist inside the repository bounds; for OfficeAgent this
+contains the integration tests, test harness and behavior cards, not production
+source. The same bounds apply during validation repair. If the resolved fix is
+not present on the pinned base and validation remains failed, the controller
+records a blocked result without changing production code, pushing a branch or
+creating a Draft PR.
+
 ## 7. Execute the authorized proposer
 
 Only after authentication, routing, source/profile qualification and mutation
@@ -426,6 +434,7 @@ npm run submit:filter-handoff -- `
   --file .\filter-handoff.local.json `
   --config .\pilot.local.json `
   --execute `
+  --execution-mode standalone-sdk `
   --authorize-commit `
   --authorize-push `
   --authorize-draft-pr

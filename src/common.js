@@ -154,6 +154,11 @@ export function configAt(path) {
         ['unqualified', 'qualified'].includes(binding.qualification) &&
         Array.isArray(binding.requestedOutcomes) && binding.requestedOutcomes.length > 0,
       `Repository ${repo.id} skill binding ${binding.id} activation is incomplete`);
+      requireThat(Array.isArray(binding.allowedWritePrefixes) &&
+        binding.allowedWritePrefixes.every(prefix => typeof prefix === 'string' && prefix.length > 0 &&
+          !isAbsolute(prefix) && !prefix.split(/[\\/]/).includes('..')) &&
+        typeof binding.requiresBehaviorCard === 'boolean',
+      `Repository ${repo.id} skill binding ${binding.id} write policy is incomplete`);
       requireThat(binding.sideEffects && ['commit', 'push', 'createDraftPR'].every(key =>
         typeof binding.sideEffects[key] === 'boolean'),
       `Repository ${repo.id} skill binding ${binding.id} needs explicit side effects`);
