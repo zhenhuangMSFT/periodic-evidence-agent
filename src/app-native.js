@@ -480,7 +480,10 @@ export function appStatus(ledger, runId) {
   const summary = { runId, executionMode: 'app-native', provenance: run.provenance, dryRun: run.dryRun,
     agentId: run.agentId, executorSessionId: run.executorSessionId ?? null, window: run.window, limits: run.limits,
     state: collection.every(p => p.state === 'complete') ? 'complete' : 'partial-or-blocked',
-    collection, report: report(ledger), workers: ledger.db.prepare('SELECT body FROM app_workers').all().map(r => JSON.parse(r.body)),
+    collection, report: report(ledger),
+    workers: ledger.db.prepare(
+      'SELECT body FROM app_workers WHERE json_extract(body,\'$.runId\')=?'
+    ).all(runId).map(r => JSON.parse(r.body)),
     threadContext: { table: 'app_thread_context',
       observations: ledger.db.prepare('SELECT COUNT(*) n FROM app_thread_context WHERE run_id=?').get(runId).n,
       indexedPasses: collection.filter(p => Number.isInteger(p.threadContextCount)).map(p => p.pass),

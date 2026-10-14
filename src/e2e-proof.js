@@ -137,6 +137,31 @@ function publicController(privateResult, selected) {
   };
 }
 
+function bindAppRun(input, controllerArtifact) {
+  if (input.format === 'e2e-proof-request-v1') return null;
+  const summaryArtifact = privateArtifact(input.appRun.summaryPath);
+  const summary = summaryArtifact.value;
+  requireThat(summary?.executionMode === 'app-native' &&
+    summary.runId === input.runId && summary.dryRun === false &&
+    Array.isArray(summary.workers),
+  'E2E proof app run is not the declared production app-native run',
+  'blocked-reconciliation');
+  const workers = summary.workers.filter(worker =>
+    worker.id === input.appRun.assignmentId && worker.runId === input.runId);
+  requireThat(workers.length === 1,
+    'E2E proof app run does not contain exactly one declared assignment',
+    'blocked-reconciliation');
+  const worker = workers[0];
+  requireThat(worker.result?.outcome === 'draft-reported' &&
+    worker.result.evidenceRef === `sha256:${hash(controllerArtifact.bytes)}`,
+  'E2E proof controller result is not content-bound to the app-native assignment',
+  'blocked-reconciliation');
+  return {
+    artifact: summaryArtifact,
+    assignmentId: worker.id
+  };
+}
+
 function verifyNoPrivateContent(value) {
   const text = JSON.stringify(value);
   const forbidden = [
@@ -173,6 +198,7 @@ export function exportE2eProof(config, input, outputDirectory) {
   requireThat(binding.selected, 'FILTER consolidation has no selected candidate',
     'blocked-reconciliation');
   const controllerArtifact = privateArtifact(input.controller.resultPath);
+  const appRun = bindAppRun(input, controllerArtifact);
   const controller = publicController(controllerArtifact.value, binding.selected);
 
   const collection = {
@@ -268,7 +294,8 @@ export function exportE2eProof(config, input, outputDirectory) {
   writeNew(join(directory, 'README.md'), readme);
   const publicNames = [...Object.keys(artifacts), 'README.md'];
   const manifest = {
-    format: 'e2e-proof-manifest-v1',
+    format: input.format === 'e2e-proof-request-v2'
+      ? 'e2e-proof-manifest-v2' : 'e2e-proof-manifest-v1',
     runId: input.runId,
     generatedAt: now(),
     state: 'draft-pr-validated',
@@ -281,7 +308,11 @@ export function exportE2eProof(config, input, outputDirectory) {
       collectionSourcesSha256: hash(sourceArtifact.bytes),
       filterManifestSha256: binding.manifestSha256,
       filterResultSha256: binding.resultHashes,
-      controllerResultSha256: hash(controllerArtifact.bytes)
+      controllerResultSha256: hash(controllerArtifact.bytes),
+      ...(appRun && {
+        appRunSummarySha256: hash(appRun.artifact.bytes),
+        appRunAssignmentId: appRun.assignmentId
+      })
     }
   };
   verifyNoPrivateContent(manifest);
@@ -296,7 +327,9 @@ export function checkE2eProof(config, input, bundleDirectory) {
   const directory = resolve(bundleDirectory);
   requireThat(existsSync(directory), 'E2E proof bundle is missing', 'unavailable');
   const manifest = readJson(join(directory, 'run-manifest.json'));
-  requireThat(manifest.format === 'e2e-proof-manifest-v1' &&
+  const expectedFormat = input.format === 'e2e-proof-request-v2'
+    ? 'e2e-proof-manifest-v2' : 'e2e-proof-manifest-v1';
+  requireThat(manifest.format === expectedFormat &&
     manifest.runId === input.runId && manifest.state === 'draft-pr-validated',
   'E2E proof manifest is invalid', 'invalid-record');
   const expectedNames = manifest.artifacts.map(artifact => artifact.name).sort();
@@ -317,11 +350,16 @@ export function checkE2eProof(config, input, bundleDirectory) {
   const corpus = loadFilterCorpus(config, sourceArtifact.value);
   const binding = bindFilterConsolidation(config, input.filter);
   const controllerArtifact = privateArtifact(input.controller.resultPath);
+  const appRun = bindAppRun(input, controllerArtifact);
   const controller = publicController(controllerArtifact.value, binding.selected);
   requireThat(manifest.privateBindings.collectionSourcesSha256 === hash(sourceArtifact.bytes) &&
     manifest.privateBindings.filterManifestSha256 === binding.manifestSha256 &&
     json(manifest.privateBindings.filterResultSha256) === json(binding.resultHashes) &&
-    manifest.privateBindings.controllerResultSha256 === hash(controllerArtifact.bytes),
+    manifest.privateBindings.controllerResultSha256 === hash(controllerArtifact.bytes) &&
+    (!appRun || (
+      manifest.privateBindings.appRunSummarySha256 === hash(appRun.artifact.bytes) &&
+      manifest.privateBindings.appRunAssignmentId === appRun.assignmentId
+    )),
   'Private E2E proof bindings changed', 'blocked-reconciliation');
   requireThat(json(manifest.window) === json(commonWindow(corpus)),
   'E2E proof source window changed',

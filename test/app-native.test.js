@@ -179,6 +179,19 @@ test('app native assignment claim/bind/result is idempotent and cannot use prima
   assert.equal(ledger.job(job.id).session_id, 'native-session');
 });
 
+test('app status includes only workers owned by the requested run', t => {
+  const { config, ledger } = setup(t, { dry: false, provenance: 'app-tool' });
+  beginApp(config, { runId: 'other-run', dryRun: false, provenance: 'app-tool' });
+  ledger.db.prepare('INSERT INTO app_workers VALUES(?,?)').run(
+    'worker-one', JSON.stringify({ id: 'worker-one', runId: 'test-run' }));
+  ledger.db.prepare('INSERT INTO app_workers VALUES(?,?)').run(
+    'worker-two', JSON.stringify({ id: 'worker-two', runId: 'other-run' }));
+  assert.deepEqual(appStatus(ledger, 'test-run').workers.map(worker => worker.id),
+    ['worker-one']);
+  assert.deepEqual(appStatus(ledger, 'other-run').workers.map(worker => worker.id),
+    ['worker-two']);
+});
+
 test('app native OA planning pins durable improvement, coverage plan and skill binding before claim', async t => {
   const { root, config, ledger } = setup(t, { dry: false, provenance: 'app-tool', configure: config => {
     config.repositories[0].validationGates = [{ id: 'oa-integration', approved: true,

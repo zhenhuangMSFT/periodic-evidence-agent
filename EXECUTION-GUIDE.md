@@ -537,9 +537,14 @@ without the required authorization.
 ### Export and verify the sanitized success proof
 
 After, and only after, the terminal outcome is `draft-pr-validated`, create a
-private `e2e-proof-request-v1` that binds the original collection sources,
-complete FILTER manifest/results and terminal controller result. Export into a
-new immutable tracked directory:
+private `e2e-proof-request-v2` that binds the original collection sources,
+complete FILTER manifest/results, terminal controller result and the production
+app-native run summary. The matching app worker result must use
+`sha256:<controller-result-sha256>` as its `evidenceRef`; this keeps the
+app-native ledger/summary as the canonical private run record while the tracked
+bundle remains the only sanitized public output. Version 1 requests remain
+supported only for checking historical proof bundles. Export into a new
+immutable tracked directory:
 
 ```powershell
 npm run pilot -- e2e-proof-export `

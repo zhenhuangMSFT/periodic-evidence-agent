@@ -6,7 +6,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { configAt, hash } from '../src/common.js';
-import { beginApp, openApp } from '../src/app-native.js';
+import { appStatus, beginApp, openApp } from '../src/app-native.js';
 import { evidenceEnvelope } from '../src/sources.js';
 import { prepareFilterBatches, consolidateFilterBatches } from '../src/filter-batches.js';
 import { exportE2eProof, checkE2eProof } from '../src/e2e-proof.js';
@@ -20,6 +20,9 @@ async function fixture(t) {
   const config = configAt('pilot.example.json');
   config.stateDirectory = join(root, 'state');
   config.statePolicy.accessApproved = true;
+  config.activation.collect = true;
+  config.limits.maxItems = config.dryRun.limits.maxItems;
+  config.limits.maxCalls = config.dryRun.limits.maxCalls;
   beginApp(config, { runId: 'source', dryRun: true, provenance: 'synthetic' });
   const { ledger } = openApp(config, 'source');
   const evidence = evidenceEnvelope('ado', 'synthetic/issues', 1, '1',
@@ -169,11 +172,33 @@ async function fixture(t) {
     state: 'draft-pr-validated', candidate: consolidated.selected,
     result: workerResult
   });
+  beginApp(config, {
+    runId: 'synthetic-e2e', dryRun: false, provenance: 'app-tool'
+  });
+  const { ledger: appLedger } = openApp(config, 'synthetic-e2e', false);
+  appLedger.db.prepare('INSERT INTO app_workers VALUES(?,?)').run(
+    workerResult.assignmentId,
+    JSON.stringify({
+      id: workerResult.assignmentId,
+      runId: 'synthetic-e2e',
+      state: 'uncertain',
+      result: {
+        outcome: 'draft-reported',
+        evidenceRef: `sha256:${hash(readFileSync(controllerPath))}`
+      }
+    })
+  );
+  const appSummary = appStatus(appLedger, 'synthetic-e2e');
+  appLedger.close();
   const proofRequest = {
-    format: 'e2e-proof-request-v1', runId: 'synthetic-e2e',
+    format: 'e2e-proof-request-v2', runId: 'synthetic-e2e',
     collection: { sourcesPath },
     filter: { manifestPath, resultPaths: [resultPath] },
-    controller: { resultPath: controllerPath }
+    controller: { resultPath: controllerPath },
+    appRun: {
+      summaryPath: appSummary.summaryPath,
+      assignmentId: workerResult.assignmentId
+    }
   };
   return { config, root, proofRequest, prepared };
 }
@@ -190,6 +215,18 @@ test('exports and rechecks a sanitized source-bound Draft PR proof', async t => 
     'verified-draft-pr-e2e-proof');
 });
 
+test('retains version 1 compatibility for historical proof bundles', async t => {
+  const s = await fixture(t);
+  const request = structuredClone(s.proofRequest);
+  request.format = 'e2e-proof-request-v1';
+  delete request.appRun;
+  const bundle = join(s.root, 'bundle-v1');
+  assert.equal(exportE2eProof(s.config, request, bundle).state,
+    'verified-draft-pr-e2e-proof');
+  assert.equal(checkE2eProof(s.config, request, bundle).state,
+    'verified-draft-pr-e2e-proof');
+});
+
 test('rejects changed private controller evidence after export', async t => {
   const s = await fixture(t);
   const bundle = join(s.root, 'bundle');
@@ -198,5 +235,14 @@ test('rejects changed private controller evidence after export', async t => {
   controller.result.findings = 'Changed after export';
   writeFileSync(s.proofRequest.controller.resultPath, bytes(controller));
   assert.throws(() => checkE2eProof(s.config, s.proofRequest, bundle),
-    /Private E2E proof bindings changed/);
+    /not content-bound/);
+});
+
+test('rejects an app-native summary that is not content-bound to the controller result', async t => {
+  const s = await fixture(t);
+  const summary = JSON.parse(readFileSync(s.proofRequest.appRun.summaryPath, 'utf8'));
+  summary.workers[0].result.evidenceRef = `sha256:${'0'.repeat(64)}`;
+  writeFileSync(s.proofRequest.appRun.summaryPath, bytes(summary));
+  assert.throws(() => exportE2eProof(s.config, s.proofRequest, join(s.root, 'bundle')),
+    /not content-bound/);
 });

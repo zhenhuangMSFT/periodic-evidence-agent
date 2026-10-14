@@ -1118,7 +1118,9 @@
       "type": "object", "additionalProperties": false,
       "required": ["format", "runId", "collection", "filter", "controller"],
       "properties": {
-        "format": { "const": "e2e-proof-request-v1" },
+        "format": {
+          "enum": ["e2e-proof-request-v1", "e2e-proof-request-v2"]
+        },
         "runId": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
@@ -1143,8 +1145,24 @@
           "type": "object", "additionalProperties": false,
           "required": ["resultPath"],
           "properties": { "resultPath": { "$ref": "#/$defs/text" } }
+        },
+        "appRun": {
+          "type": "object", "additionalProperties": false,
+          "required": ["summaryPath", "assignmentId"],
+          "properties": {
+            "summaryPath": { "$ref": "#/$defs/text" },
+            "assignmentId": { "$ref": "#/$defs/text" }
+          }
         }
-      }
+      },
+      "allOf": [{
+        "if": {
+          "properties": { "format": { "const": "e2e-proof-request-v2" } },
+          "required": ["format"]
+        },
+        "then": { "required": ["appRun"] },
+        "else": { "not": { "required": ["appRun"] } }
+      }]
     },
     "examples": {
       "type": "object", "additionalProperties": false,
