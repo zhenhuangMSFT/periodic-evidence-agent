@@ -2424,6 +2424,7 @@ test('automatic delivery cleanup honors opt-out and retains failure metadata', a
       const { config, ledger, job, repo, root } = await fixture(t, 'authenticated-source', 'defect-fix');
       config.activation.dispatch = true;
       config.limits.maxAiCreditsPerSession = 1;
+      if (mode === 'validation-failed') config.limits.maxValidationRepairRounds = 0;
       config.workspaceCleanup = { enabled: mode !== 'disabled', retentionHours: mode === 'retention' ? 24 : 0 };
       if (mode === 'absent-policy') delete config.workspaceCleanup;
       await command('git', ['init', '--bare', '--quiet', repo.remote], root);
