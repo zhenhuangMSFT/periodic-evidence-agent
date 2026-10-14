@@ -807,7 +807,7 @@ test('worker file callbacks reject traversal, alternate streams, protected paths
   tools.replaceLines('src\\value.js', 1, 1,
     'export const value = 3;', 'export const value = 4;');
   assert.equal(tools.read('src\\value.js', 1, 1), 'export const value = 4;');
-  assert.throws(() => tools.write('src\\another.js', 'bad'), /prefixes/);
+  assert.throws(() => tools.write('src\\another.js', 'bad'), /bounds/);
   assert.equal((await tools.search('value = 1', 'src')).some(match =>
     match.includes('src/value.js')), false);
 });
@@ -2158,7 +2158,7 @@ test('planned OA skill path creates a source-bound validated draft result throug
       assert.match(loadedSkill.instructions, /Synthetic OA skill/);
       assert.equal(loadedSkill.skillRevision, baseRevision);
       assert.throws(() => toolkit.write('src\\value.js', 'export const value = 2;\n'),
-        /outside approved edit prefixes/);
+        /outside approved edit bounds/);
       toolkit.write('test\\behavior.test.js',
         "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('OA behavior', () => assert.equal(1, 1));\n");
       toolkit.write('test\\behavior.behavior-card.md', '# OA behavior\n\nSynthetic behavior card.\n');
@@ -2475,6 +2475,8 @@ test('test-only skill diff gate rejects production paths including rename source
   assert.doesNotThrow(() => requireAllowedSkillChanges(
     ['test/behavior.behavior-card.md', 'test/behavior.test.js'], ['test'],
     ['test/behavior.behavior-card.md', 'test/behavior.test.js']));
+  assert.doesNotThrow(() => requireAllowedSkillChanges(
+    ['shared/registry.yaml'], ['test'], ['shared/registry.yaml'], ['shared/registry.yaml']));
   assert.throws(() => requireAllowedSkillChanges(
     ['test/behavior.test.js', 'src/app.js'], ['test']),
   /src\/app\.js/);

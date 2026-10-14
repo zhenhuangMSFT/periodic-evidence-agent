@@ -37,6 +37,7 @@ function setup(t) {
       id: 'fixture-skill', capability: 'integration-test-authoring',
       skillPath: 'docs/skill.md', enabled: true, qualification: 'qualified',
       requestedOutcomes: ['add-or-update-tests'],
+      allowedWritePrefixes: ['test'], requiresBehaviorCard: false,
       sideEffects: { commit: false, push: false, createDraftPR: false }
     }]
   }];

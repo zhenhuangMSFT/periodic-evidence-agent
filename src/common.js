@@ -157,6 +157,9 @@ export function configAt(path) {
       requireThat(Array.isArray(binding.allowedWritePrefixes) &&
         binding.allowedWritePrefixes.every(prefix => typeof prefix === 'string' && prefix.length > 0 &&
           !isAbsolute(prefix) && !prefix.split(/[\\/]/).includes('..')) &&
+        Array.isArray(binding.allowedWriteFiles ?? []) &&
+        (binding.allowedWriteFiles ?? []).every(path => typeof path === 'string' && path.length > 0 &&
+          !isAbsolute(path) && !path.split(/[\\/]/).includes('..')) &&
         typeof binding.requiresBehaviorCard === 'boolean',
       `Repository ${repo.id} skill binding ${binding.id} write policy is incomplete`);
       requireThat(binding.sideEffects && ['commit', 'push', 'createDraftPR'].every(key =>

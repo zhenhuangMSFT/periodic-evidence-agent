@@ -82,6 +82,8 @@ async function exerciseFilterProposer(s, ledger, checkout, git, manifest, review
       id: 'synthetic-declarative', capability: 'declarative-e2e-authoring',
       skillPath: declarativeSkillPath, inputFormat: declarativeInput.format,
       enabled: true, qualification: 'qualified', requestedOutcomes: ['add-declarative-e2e-tests'],
+      allowedWritePrefixes: ['scenarios'], allowedWriteFiles: ['resources.json'],
+      requiresBehaviorCard: false,
       sideEffects: { commit: true, push: true, createDraftPR: true }
     }]
   };

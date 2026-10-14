@@ -80,6 +80,19 @@
           "enabled": false,
           "qualification": "unqualified",
           "requestedOutcomes": ["add-declarative-e2e-tests"],
+          "allowedWritePrefixes": [
+            "ooui/apps/cross-office-client-e2e/scenarios",
+            "ooui/apps/excel-agent-declarative-e2e/declarative/scenarios"
+          ],
+          "allowedWriteFiles": [
+            "ooui/apps/cross-office-client-e2e/composites/cross-office.yaml",
+            "ooui/apps/cross-office-client-e2e/ui/ui-map.yaml",
+            "ooui/apps/cross-office-client-e2e/resources.yaml",
+            "ooui/apps/excel-agent-declarative-e2e/declarative/composites/excel-agent.yaml",
+            "ooui/apps/excel-agent-declarative-e2e/declarative/ui-map.yaml",
+            "ooui/apps/excel-agent-declarative-e2e/declarative/resources.yaml"
+          ],
+          "requiresBehaviorCard": false,
           "sideEffects": { "commit": false, "push": false, "createDraftPR": false }
         }
       ],

@@ -142,6 +142,7 @@
               "qualification": { "enum": ["unqualified", "qualified"] },
               "requestedOutcomes": { "$ref": "#/$defs/texts" },
               "allowedWritePrefixes": { "$ref": "#/$defs/texts" },
+              "allowedWriteFiles": { "$ref": "#/$defs/texts" },
               "requiresBehaviorCard": { "type": "boolean" },
               "sideEffects": {
                 "type": "object", "additionalProperties": false,
@@ -710,6 +711,7 @@
         "skillBindingId": { "$ref": "#/$defs/text" },
         "skillInput": { "$ref": "#/$defs/declarativeE2ESpecBatch" },
         "allowedWritePrefixes": { "$ref": "#/$defs/texts" },
+        "allowedWriteFiles": { "$ref": "#/$defs/texts" },
         "skillQualification": {
           "type": "object", "additionalProperties": false,
           "required": ["qualificationId", "baseRevision", "skillSha256", "skillPath", "remote",

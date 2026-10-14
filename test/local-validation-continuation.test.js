@@ -50,6 +50,7 @@ async function fixture(t, { rejectPreparation = false } = {}) {
       executable: process.execPath, args: ['--test', 'test/case.test.js'], timeoutMs: 10000 }],
     skillBindings: [{ id: 'native-test', capability: 'integration-test-authoring', skillPath,
       enabled: true, qualification: 'qualified', requestedOutcomes: ['add-or-update-tests'],
+      allowedWritePrefixes: ['test'], requiresBehaviorCard: false,
       sideEffects: { commit: true, push: true, createDraftPR: true } }]
   };
   config.repositories = [repo];
@@ -97,7 +98,7 @@ async function fixture(t, { rejectPreparation = false } = {}) {
       changedFiles: ['test/case.test.js'], testsAddedOrUpdated: ['fixture case'],
       behaviorCardsAddedOrUpdated: [], unknowns: [], needsHumanDecision: false }
   };
-  await assert.rejects(dispatch(config, ledger, job.id, {
+  await dispatch(config, ledger, job.id, {
     runModel: async (_config, _ledger, _job, _assignment, _investigation, toolkit) => {
       toolkit.write('test/case.test.js', "import test from 'node:test'; test('fixture', () => {});\n");
       toolkit.finish(structuredClone(proposal));
@@ -118,8 +119,9 @@ async function fixture(t, { rejectPreparation = false } = {}) {
       }
     }),
     pushBranch: async () => assert.fail('failed run must not push')
-  }), /no push permitted/);
+  });
   const result = ledger.all('workerResult')[0];
+  assert.equal(result.outcome, 'blocked');
   const nextConfig = structuredClone(config);
   nextConfig.stateDirectory = join(root, 'next');
   nextConfig.repositories[0].validationGates[0].lfsPaths = [lfsPath];
@@ -256,7 +258,7 @@ test('failed continued validation cannot publish or start a model repair', async
   const continued = await prepareLocalValidationContinuation(ctx.config, ctx.ledger, ctx.job.id,
     ctx.nextConfig, ctx.nextLedger, ctx.authorization, ctx.proposal);
   let validations = 0;
-  await assert.rejects(dispatchLocalValidationContinuation(ctx.nextConfig, ctx.nextLedger,
+  const result = await dispatchLocalValidationContinuation(ctx.nextConfig, ctx.nextLedger,
     continued.assignment.id, {
       runModel: async () => assert.fail('must not repair with a model'),
       runValidation: async (_config, _ledger, _job, _repo, revision) => {
@@ -269,8 +271,10 @@ test('failed continued validation cannot publish or start a model repair', async
       },
       pushBranch: async () => assert.fail('must not push failed validation'),
       createDraft: async () => assert.fail('must not publish failed validation')
-    }), /no push permitted/);
+    });
   assert.equal(validations, 1);
+  assert.equal(result.outcome, 'blocked');
+  assert.match(result.blocker.reason, /production-code repair is prohibited/);
   assert.equal(ctx.nextLedger.job(continued.assignment.id).state, 'blocked');
   assert.equal(ctx.nextLedger.all('workerResult')[0].toolUsage.used, 0);
 });
@@ -288,7 +292,7 @@ async function discoveryFixture(t) {
     initial.assignment.id, 'recorded-role-handoff', roleDetail);
   ctx.nextLedger.finishOperation(`${initial.assignment.id}:recorded-role-handoff`, 'recorded', roleDetail);
   const artifact = join(ctx.root, 'fixture-discovery-failure.json');
-  await assert.rejects(dispatchLocalValidationContinuation(ctx.nextConfig, ctx.nextLedger,
+  const failedResult = await dispatchLocalValidationContinuation(ctx.nextConfig, ctx.nextLedger,
     initial.assignment.id, {
       runModel: async () => assert.fail('no second model'),
       runValidation: async (_config, store, job, _repo, revision) => {
@@ -303,7 +307,9 @@ async function discoveryFixture(t) {
           nextCheckAt: null, attemptCount: 1, blockedReason: null }];
       },
       pushBranch: async () => assert.fail('discovery failure cannot push')
-    }), /no push permitted/);
+    });
+  assert.equal(failedResult.outcome, 'blocked');
+  assert.match(failedResult.blocker.reason, /production-code repair is prohibited/);
   const failedJob = ctx.nextLedger.job(initial.assignment.id);
   const nextConfig = structuredClone(ctx.nextConfig);
   nextConfig.stateDirectory = join(ctx.root, 'non-dot-placement');
