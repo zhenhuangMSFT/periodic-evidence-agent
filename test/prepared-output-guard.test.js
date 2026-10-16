@@ -158,3 +158,19 @@ test('a repeated change delivered after hashing must be revalidated', async t =>
   assert.equal(result.valid, false);
   assert.equal(result.details.settlementPassCount, 2);
 });
+
+test('watcher loss before settlement reports current events instead of stale warm telemetry',
+  async t => {
+    const ctx = await fixture(t);
+    assert.equal((await ctx.initialize()).valid, true);
+    const quiet = await ctx.verify();
+    assert.equal(quiet.details.observedEventCount, 0);
+    ctx.watcher().callback('change', null);
+    const lost = await ctx.verify();
+    assert.equal(lost.valid, false);
+    assert.match(lost.reason, /unknown/);
+    assert.equal(lost.details.observedEventCount, 1);
+    assert.equal(lost.details.nullFilenameEventCount, 1);
+    assert.equal(lost.details.workerTaskCount, 0);
+    assert.equal(lost.details.durationMs, 0);
+  });

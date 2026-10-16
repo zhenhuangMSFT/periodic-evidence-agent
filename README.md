@@ -47,6 +47,13 @@ networks that block the public registry, configure your organization's approved
 npm mirror (for example with `npm_config_registry`) before `npm ci`; do not
 disable TLS verification or copy another user's npm credentials.
 
+The explicitly invoked `npm run benchmark:fingerprint -- --output <absolute-new-file>`
+measures local synthetic controller/fingerprint workloads, including event-heavy
+warm verification and independent full-fresh equivalence. It is not part of
+setup, the periodic agent or default CI, and is not real OfficeAgent E2E proof.
+See the [measurements, limits and guardian decision](scripts/validation/FINGERPRINT-PERFORMANCE.md)
+and the `local-fingerprint-benchmark` skill before running it.
+
 ## Devbox repository setup
 
 This optional full product-development setup is not a prerequisite for the

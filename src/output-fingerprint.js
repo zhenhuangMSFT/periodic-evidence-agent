@@ -117,28 +117,46 @@ function dependencyNodeFingerprint(workspace, physicalWorkspace, entryPath, name
   return { name, type: 'directory', sha256 };
 }
 
-export function dependencyEntryFingerprint(workspace, dependencyPath, entryPath) {
-  const dependencyDirectory = resolve(workspace, dependencyPath);
+function dependencyEntryValue(
+  workspace, dependencyPath, dependencyDirectory, entryPath,
+  physicalWorkspace = null, entries = null) {
   const target = resolve(dependencyDirectory, entryPath);
   const bounded = relative(dependencyDirectory, target);
   if (!bounded || bounded.startsWith('..') || isAbsolute(bounded) ||
     !existsSync(target)) return null;
-  return dependencyNodeFingerprint(workspace, realpathSync.native(workspace),
-    target, basename(target));
+  return dependencyNodeFingerprint(
+    workspace, physicalWorkspace ?? realpathSync.native(workspace),
+    target, basename(target), entries, join(dependencyPath, entryPath));
+}
+
+export function dependencyEntryFingerprint(workspace, dependencyPath, entryPath) {
+  return dependencyEntryValue(
+    workspace, dependencyPath, resolve(workspace, dependencyPath), entryPath);
 }
 
 export function dependencyEntryFingerprintWithEntries(
   workspace, dependencyPath, entryPath) {
-  const dependencyDirectory = resolve(workspace, dependencyPath);
-  const target = resolve(dependencyDirectory, entryPath);
-  const bounded = relative(dependencyDirectory, target);
-  if (!bounded || bounded.startsWith('..') || isAbsolute(bounded) ||
-    !existsSync(target)) return null;
   const entries = [];
-  const value = dependencyNodeFingerprint(
-    workspace, realpathSync.native(workspace), target, basename(target),
-    entries, join(dependencyPath, entryPath));
+  const value = dependencyEntryValue(
+    workspace, dependencyPath, resolve(workspace, dependencyPath), entryPath,
+    null, entries);
   return value ? { value, entries } : null;
+}
+
+export function dependencyEntriesFingerprint(
+  workspace, dependencyPath, entryPaths, captureEntries = false) {
+  const dependencyDirectory = resolve(workspace, dependencyPath);
+  const physicalWorkspace = realpathSync.native(workspace);
+  const values = [];
+  const entries = captureEntries ? [] : null;
+  for (const entryPath of entryPaths) {
+    const value = dependencyEntryValue(
+      workspace, dependencyPath, dependencyDirectory, entryPath,
+      physicalWorkspace, entries);
+    if (!value) return null;
+    values.push(value);
+  }
+  return { value: values, entries };
 }
 
 export function dependencyOutputFingerprint(path, entries) {

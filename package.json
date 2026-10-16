@@ -10,6 +10,7 @@
     "setup:validation-auth": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validation/prepare-office-agent-auth.ps1",
     "test": "node --test",
     "demo": "node scripts/demo.mjs",
+    "benchmark:fingerprint": "node scripts/benchmark-fingerprint.mjs",
     "submit:reviewed-handoff": "node src/cli.js submit-reviewed-handoff",
     "submit:filter-handoff": "node src/cli.js submit-filter-handoff",
     "check:package": "node scripts/check-package.mjs",

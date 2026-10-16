@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { availableParallelism } from 'node:os';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -581,12 +582,26 @@ function profileForGate(gate) {
   const bytes = readFileSync(gate.profilePath);
   return { path: gate.profilePath, sha256: gate.profileSha256, bytes };
 }
-export async function outputFingerprint(workspace, paths, captureEntries = false) {
+export async function outputFingerprint(
+  workspace, paths, captureEntries = false, telemetry = null) {
+  const started = performance.now();
+  const cpu = telemetry ? process.cpuUsage() : null;
+  try {
+    return await computeOutputFingerprint(workspace, paths, captureEntries, telemetry);
+  } finally {
+    if (telemetry) {
+      const used = process.cpuUsage(cpu);
+      telemetry.durationMs = performance.now() - started;
+      telemetry.processCpuMs = (used.user + used.system) / 1000;
+    }
+  }
+}
+async function computeOutputFingerprint(workspace, paths, captureEntries, telemetry) {
   const hasDependencyDirectory = paths.some(path =>
     path.replaceAll('\\', '/').endsWith('node_modules') &&
     existsSync(join(workspace, path)) && lstatSync(join(workspace, path)).isDirectory());
   if ((paths.length >= 8 || hasDependencyDirectory) && availableParallelism() > 1)
-    return parallelOutputFingerprint(workspace, paths, captureEntries);
+    return parallelOutputFingerprint(workspace, paths, captureEntries, telemetry);
   const results = paths.map(path => captureEntries
     ? outputPathFingerprintWithEntries(workspace, path)
     : { value: outputPathFingerprint(workspace, path), entries: null });
@@ -603,25 +618,34 @@ function watchPathKey(path) {
   const normalized = normalizedOutputPath(path);
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
-function outputFingerprintTargetExceedsTaskEntryLimit(target) {
+function outputFingerprintTaskEntryCount(target, info) {
   let count = 0;
-  const pending = [target];
+  const pending = [{ path: target, info }];
   while (pending.length > 0) {
     const current = pending.pop();
-    const info = lstatSync(current);
-    if (++count > maxOutputFingerprintTaskEntries) return true;
-    if (!info.isDirectory() || info.isSymbolicLink()) continue;
-    for (const entry of readdirSync(current))
-      pending.push(join(current, entry));
+    if (++count > maxOutputFingerprintTaskEntries) return count;
+    if (!current.info.isDirectory() || current.info.isSymbolicLink()) continue;
+    for (const entry of readdirSync(current.path, { withFileTypes: true }))
+      pending.push({ path: join(current.path, entry.name), info: entry });
   }
-  return false;
+  return count;
 }
-async function runOutputFingerprintTasks(workspace, tasks, captureEntries) {
+async function runOutputFingerprintTasks(workspace, tasks, captureEntries, telemetry = null) {
   const serialized = Array(tasks.length);
   const capturedEntries = [];
   const workers = [];
   const taskTimers = new Map();
   const workerCount = Math.min(8, availableParallelism(), tasks.length);
+  const started = performance.now();
+  const dispatchTimes = new Map();
+  if (telemetry) Object.assign(telemetry, {
+    taskCount: tasks.length, workerCount,
+    dispatchQueueSumMs: 0, dispatchQueueMaxMs: 0,
+    taskRoundTripSumMs: 0, taskRoundTripMaxMs: 0,
+    workerComputeSumMs: 0, workerComputeMaxMs: 0,
+    workerSerializeSumMs: 0, serializedBytes: 0,
+    capturedEntryCount: 0, hashedFileCount: captureEntries ? 0 : null
+  });
   let next = 0;
   try {
     const valid = await new Promise((resolvePromise, rejectPromise) => {
@@ -635,12 +659,19 @@ async function runOutputFingerprintTasks(workspace, tasks, captureEntries) {
       const dispatch = worker => {
         if (next >= tasks.length) return;
         const index = next++;
+        if (telemetry) {
+          const elapsed = performance.now() - started;
+          telemetry.dispatchQueueSumMs += elapsed;
+          telemetry.dispatchQueueMaxMs = Math.max(telemetry.dispatchQueueMaxMs, elapsed);
+          dispatchTimes.set(index, performance.now());
+        }
         const timer = setTimeout(() => fail(new PilotError('blocked-validation',
           `Output fingerprint task timed out after ${outputFingerprintTaskTimeoutMs} ms: ` +
           json(tasks[index]))), outputFingerprintTaskTimeoutMs);
         taskTimers.set(index, timer);
         worker.postMessage({
-          workspace, index, ...tasks[index], captureEntries
+          workspace, index, ...tasks[index], captureEntries,
+          ...(telemetry ? { measure: true } : {})
         });
       };
       for (let index = 0; index < workerCount; index++) {
@@ -663,6 +694,20 @@ async function runOutputFingerprintTasks(workspace, tasks, captureEntries) {
             resolvePromise(false);
             return;
           }
+          if (telemetry) {
+            const elapsed = performance.now() - dispatchTimes.get(result.index);
+            dispatchTimes.delete(result.index);
+            telemetry.taskRoundTripSumMs += elapsed;
+            telemetry.taskRoundTripMaxMs = Math.max(telemetry.taskRoundTripMaxMs, elapsed);
+            telemetry.workerComputeSumMs += result.timing.computeMs;
+            telemetry.workerComputeMaxMs =
+              Math.max(telemetry.workerComputeMaxMs, result.timing.computeMs);
+            telemetry.workerSerializeSumMs += result.timing.serializeMs;
+            telemetry.serializedBytes += Buffer.byteLength(result.serialized);
+            telemetry.capturedEntryCount += result.entries?.length ?? 0;
+            if (captureEntries) telemetry.hashedFileCount +=
+              result.entries.filter(([, value]) => value.type === 'file').length;
+          }
           if (captureEntries && Array.isArray(result.entries))
             for (const entry of result.entries) capturedEntries.push(entry);
           serialized[result.index] = result.serialized;
@@ -684,6 +729,7 @@ async function runOutputFingerprintTasks(workspace, tasks, captureEntries) {
   } finally {
     for (const timer of taskTimers.values()) clearTimeout(timer);
     await Promise.all(workers.map(worker => worker.terminate()));
+    if (telemetry) telemetry.workerPoolWallMs = performance.now() - started;
   }
 }
 function preparedOutputFingerprintTask(guard, path) {
@@ -840,10 +886,8 @@ function startPreparedOutputGuard(
     return null;
   }
 }
-async function performPreparedOutputSettlement(guard) {
-  const startedAt = Date.now();
-  await delay(100);
-  const telemetry = {
+function preparedOutputSettlementStats(guard) {
+  return {
     ...guard.eventStats,
     changedEntryCount: guard.changedEntries.size,
     coalescedPathCount: 0,
@@ -854,6 +898,11 @@ async function performPreparedOutputSettlement(guard) {
     settlementPassCount: 0,
     coalescedPaths: []
   };
+}
+async function performPreparedOutputSettlement(guard) {
+  const startedAt = Date.now();
+  await delay(100);
+  const telemetry = preparedOutputSettlementStats(guard);
   guard.eventStats = preparedOutputEventStats();
   const finish = valid => {
     guard.lastSettlement = {
@@ -961,7 +1010,7 @@ export async function verifyPreparedOutputs(
     retainPreparedOutputGuard(receiptPath, current);
     if (current.dirty) return {
       valid: false, method: 'watch', reason: current.dirtyReason,
-      details: current.lastSettlement
+      details: { ...preparedOutputSettlementStats(current), durationMs: 0 }
     };
     if (current.verified)
       return withActivePreparedOutputGuard(current, async () => {
@@ -974,12 +1023,15 @@ export async function verifyPreparedOutputs(
       });
   }
   let baseline = capturedBaseline;
+  const fullVerification = { baseline: null, verification: {} };
   if (!baseline) {
-    const captured = await outputFingerprint(workspace, outputs.paths, true);
+    fullVerification.baseline = {};
+    const captured = await outputFingerprint(
+      workspace, outputs.paths, true, fullVerification.baseline);
     if (!captured || captured.sha256 !== outputs.sha256)
       return {
         valid: false, method: 'content',
-        reason: 'content-fingerprint-mismatch'
+        reason: 'content-fingerprint-mismatch', fullVerification
       };
     baseline = captured.entries;
   }
@@ -987,26 +1039,27 @@ export async function verifyPreparedOutputs(
     receiptPath, workspace, outputs.paths, outputs.sha256, baseline);
   if (guard?.dirty) return {
     valid: false, method: 'watch', reason: guard.dirtyReason,
-    details: guard.lastSettlement
+    details: { ...preparedOutputSettlementStats(guard), durationMs: 0 }
   };
   if (guard?.verified) return {
     valid: true, method: 'watch', details: guard.lastSettlement
   };
   const verify = async () => {
-    const actual = await outputFingerprint(workspace, outputs.paths);
+    const actual = await outputFingerprint(
+      workspace, outputs.paths, false, fullVerification.verification);
     if ((guard && !(await settlePreparedOutputGuard(guard))) ||
       actual !== outputs.sha256) {
       closePreparedOutputGuard(receiptPath);
       return {
         valid: false, method: 'content',
         reason: guard?.dirtyReason ?? 'content-fingerprint-mismatch',
-        details: guard?.lastSettlement ?? null
+        details: guard?.lastSettlement ?? null, fullVerification
       };
     }
     if (guard) guard.verified = true;
     return {
       valid: true, method: guard ? 'content+watch' : 'content',
-      details: guard?.lastSettlement ?? null
+      details: guard?.lastSettlement ?? null, fullVerification
     };
   };
   return guard ? withActivePreparedOutputGuard(guard, verify) : verify();
@@ -1015,27 +1068,36 @@ async function preparedOutputsRemainValid(receipt) {
   return verifyPreparedOutputs(
     receipt.receiptPath, receipt.workspace, receipt.outputs);
 }
-async function parallelOutputFingerprint(workspace, paths, captureEntries = false) {
+async function parallelOutputFingerprint(
+  workspace, paths, captureEntries = false, telemetry = null) {
+  const planningStarted = performance.now();
   const tasks = [];
   const task = value => {
     tasks.push(value);
     return tasks.length - 1;
   };
-  const dependencyEntryPlan = (dependencyPath, entryPath) => {
+  let batch = null;
+  const dependencyEntryPlan = (dependencyPath, entryPath, info) => {
     const target = join(workspace, dependencyPath, entryPath);
-    const info = lstatSync(target);
-    if (!info.isDirectory() || info.isSymbolicLink() ||
-      !outputFingerprintTargetExceedsTaskEntryLimit(target))
-      return {
-        task: task({
-          mode: 'dependency-entry', dependencyPath, entryPath
-        })
-      };
+    const count = outputFingerprintTaskEntryCount(target, info);
+    if (count <= maxOutputFingerprintTaskEntries) {
+      if (!batch || batch.dependencyPath !== dependencyPath ||
+        batch.count + count > maxOutputFingerprintTaskEntries) {
+        const value = {
+          mode: 'dependency-entries', dependencyPath, entryPaths: []
+        };
+        batch = { ...value, task: task(value), count: 0 };
+      }
+      const item = batch.entryPaths.length;
+      batch.entryPaths.push(entryPath);
+      batch.count += count;
+      return { task: batch.task, item };
+    }
     const children = readdirSync(target, { withFileTypes: true })
       .sort((left, right) =>
         left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
       .map(entry => dependencyEntryPlan(
-        dependencyPath, join(entryPath, entry.name)));
+        dependencyPath, join(entryPath, entry.name), entry));
     return {
       name: target.slice(dirname(target).length + 1),
       path: join(dependencyPath, entryPath),
@@ -1043,10 +1105,10 @@ async function parallelOutputFingerprint(workspace, paths, captureEntries = fals
     };
   };
   const capturedEntries = [];
-  const dependencyEntryValue = (entry, serialized) => {
-    if (Number.isInteger(entry.task)) return JSON.parse(serialized[entry.task]);
+  const dependencyEntryValue = (entry, values) => {
+    if (Number.isInteger(entry.task)) return values[entry.task][entry.item];
     const children = entry.children.map(child =>
-      dependencyEntryValue(child, serialized));
+      dependencyEntryValue(child, values));
     const sha256 = hash(json(children));
     if (captureEntries)
       capturedEntries.push([
@@ -1063,11 +1125,12 @@ async function parallelOutputFingerprint(workspace, paths, captureEntries = fals
     const entries = readdirSync(target, { withFileTypes: true })
       .sort((left, right) =>
         left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
-      .map(entry => dependencyEntryPlan(path, entry.name));
+      .map(entry => dependencyEntryPlan(path, entry.name, entry));
     return { type: 'dependency', path, entries };
   });
+  if (telemetry) telemetry.planningMs = performance.now() - planningStarted;
   if (plans.some(plan => !plan)) return null;
-  if (tasks.length < 8) {
+  if (tasks.length === 0) {
     const results = paths.map(path => captureEntries
       ? outputPathFingerprintWithEntries(workspace, path)
       : { value: outputPathFingerprint(workspace, path), entries: null });
@@ -1077,33 +1140,17 @@ async function parallelOutputFingerprint(workspace, paths, captureEntries = fals
       ? { sha256, entries: new Map(results.flatMap(result => result.entries)) }
       : sha256;
   }
-  if (tasks.length === 0) {
-    const values = plans.map(plan => dependencyOutputFingerprint(plan.path,
-      plan.entries.map(entry => ({
-        name: entry.name, type: 'directory', sha256: hash(json([]))
-      }))));
-    const sha256 = hash(json(values));
-    return captureEntries
-      ? {
-        sha256,
-        entries: new Map(plans.map((plan, index) => [
-          plan.path, {
-            type: 'directory', sha256: values[index].manifestSha256
-          }
-        ]))
-      }
-      : sha256;
-  }
   const completed =
-    await runOutputFingerprintTasks(workspace, tasks, captureEntries);
+    await runOutputFingerprintTasks(workspace, tasks, captureEntries, telemetry);
   if (!completed) return null;
   if (captureEntries)
     for (const entry of completed.capturedEntries) capturedEntries.push(entry);
+  const taskValues = completed.serialized.map(value => JSON.parse(value));
   const values = plans.map(plan => {
     if (plan.type === 'path')
-      return JSON.parse(completed.serialized[plan.task]);
+      return taskValues[plan.task];
     const entries = plan.entries.map(entry =>
-      dependencyEntryValue(entry, completed.serialized));
+      dependencyEntryValue(entry, taskValues));
     const value = dependencyOutputFingerprint(plan.path, entries);
     if (captureEntries)
       capturedEntries.push([
@@ -1939,7 +1986,8 @@ async function runStagedGate(config, ledger, job, repo, gate, revision, prepared
             id: 'verify-prepared-outputs', durationMs: Date.now() - outputsStarted,
             method: outputVerification.method,
             reason: outputVerification.reason ?? null,
-            details: outputVerification.details ?? null
+            details: outputVerification.details ?? null,
+            fullVerification: outputVerification.fullVerification ?? null
           });
           const sourceStarted = Date.now();
           const dirty = await git(receipt.workspace, ['status', '--porcelain']);
