@@ -37,6 +37,16 @@ discovered newly added project skills. No global installation was performed.
 Product project sessions do not automatically inherit this project's skill
 files; supply the selected procedure and durable assignment when handing off.
 
+`send-teams-notification` is a separate reusable utility for explicitly
+authorized channel messages from any task/session. It uses the configured Flow
+bot sender, optional verified user mentions and shared durable delivery
+receipts. It is not a fourth role, a scheduler, or a new `agent ROLE` operation.
+See [its procedure](.github/skills/send-teams-notification/SKILL.md) and
+[sender setup](README.md#explicit-teams-notifications). Another project can
+load the utility by adding this notification checkout as an allowed directory;
+the executing identity still needs its own approved configuration and Azure
+permissions. No role-specific publication restriction is overridden.
+
 Skills separate procedures, not operating-system permissions or running agents.
 They neither launch sessions nor authorize scans just by being installed.
 The collector and reviewer currently share the configured durable coordinator

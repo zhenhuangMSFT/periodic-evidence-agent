@@ -8,6 +8,7 @@
     "setup": "node scripts/setup.mjs",
     "setup:repos": "node src/cli.js setup --config pilot.local.json",
     "setup:validation-auth": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validation/prepare-office-agent-auth.ps1",
+    "notify:teams": "node scripts/teams-notification.mjs",
     "test": "node --test",
     "demo": "node scripts/demo.mjs",
     "submit:reviewed-handoff": "node src/cli.js submit-reviewed-handoff",

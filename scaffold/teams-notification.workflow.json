@@ -1,0 +1,82 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": { "type": "Object" },
+    "teamId": { "type": "String" },
+    "channelId": { "type": "String" }
+  },
+  "triggers": {
+    "When_an_HTTP_request_is_received": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "schema": {
+          "type": "object",
+          "required": ["notificationId", "card"],
+          "properties": {
+            "notificationId": { "type": "string", "minLength": 1 },
+            "card": { "type": "object" }
+          }
+        }
+      }
+    }
+  },
+  "actions": {
+    "Post_periodic_agent_card": {
+      "type": "ApiConnection",
+      "inputs": {
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['teams']['connectionId']"
+          }
+        },
+        "method": "post",
+        "path": "/v1.0/teams/conversation/adaptivecard/poster/@{encodeURIComponent('Flow bot')}/location/@{encodeURIComponent('Channel')}",
+        "body": {
+          "messageBody": "@string(triggerBody()?['card'])",
+          "recipient": {
+            "groupId": "@parameters('teamId')",
+            "channelId": "@parameters('channelId')"
+          }
+        },
+        "retryPolicy": { "type": "none" }
+      }
+    },
+    "Return_confirmed_delivery": {
+      "type": "Response",
+      "kind": "Http",
+      "runAfter": { "Post_periodic_agent_card": ["Succeeded"] },
+      "inputs": {
+        "statusCode": "@if(empty(body('Post_periodic_agent_card')?['id']), 502, 200)",
+        "body": {
+          "status": "@if(empty(body('Post_periodic_agent_card')?['id']), 'unknown', 'sent')",
+          "messageId": "@body('Post_periodic_agent_card')?['id']",
+          "notificationId": "@triggerBody()?['notificationId']",
+          "teamId": "@parameters('teamId')",
+          "channelId": "@parameters('channelId')",
+          "workflowRunId": "@workflow()?['run']?['name']",
+          "retrySafe": false
+        }
+      }
+    },
+    "Return_unconfirmed_delivery": {
+      "type": "Response",
+      "kind": "Http",
+      "runAfter": {
+        "Post_periodic_agent_card": ["Failed", "TimedOut", "Skipped"]
+      },
+      "inputs": {
+        "statusCode": 502,
+        "body": {
+          "status": "unknown",
+          "notificationId": "@triggerBody()?['notificationId']",
+          "workflowRunId": "@workflow()?['run']?['name']",
+          "connectorStatus": "@actions('Post_periodic_agent_card')?['status']",
+          "retrySafe": false
+        }
+      }
+    }
+  },
+  "outputs": {}
+}

@@ -122,6 +122,72 @@ own disposable `.state\demo-*\` directory inside the checkout and returns that
 exact directory and summary path. To clean up, remove only the specific demo
 directory printed by that invocation, never the whole `.state` tree.
 
+## Explicit Teams notifications
+
+Use the **`send-teams-notification`** project skill for an explicitly authorized
+channel message from any task or agent, not only an evidence workflow. It wraps
+the sender below, accepts approved text/links and an optional user mention, and
+uses stable shared receipt paths to prevent blind repeat sends. For example:
+"Use send-teams-notification to post this task's result to the configured
+channel and mention me." See
+[the skill](.github/skills/send-teams-notification/SKILL.md) for inputs,
+reconciliation and use from another project. Skill availability does not grant
+the caller Azure permissions or enable automatic notifications.
+
+`scaffold/teams-notification.workflow.json` defines a dedicated Consumption
+Logic App that posts Adaptive Cards as Flow bot to one configured standard
+channel. Deploy it separately with an approved Teams API connection, explicit
+`teamId`/`channelId` parameters, narrow Entra OAuth trigger policies and SAS
+authentication disabled. Do not replace an existing Sherlock workflow or its
+notification routes. The caller needs an authorized Azure CLI identity and
+permission to read the workflow and its callback URL.
+
+Keep deployment identifiers in a gitignored `teams.local.json`:
+
+```json
+{
+  "enabled": true,
+  "workflowResourceId": "/subscriptions/SUBSCRIPTION/resourceGroups/GROUP/providers/Microsoft.Logic/workflows/WORKFLOW",
+  "identity": { "tenantId": "TENANT_GUID", "objectId": "USER_GUID" },
+  "teamId": "TEAM_GUID",
+  "channelId": "19:CHANNEL@thread.tacv2"
+}
+```
+
+This is repository-local configuration, not a Copilot session artifact. The
+repository command defaults to `teams.local.json` next to `package.json`, even
+when its script is invoked from another working directory. Receipts default to
+`.state\teams-notifications\<notification-id>.receipt.json` relative to that
+configuration. If multiple worktrees share one live deployment, explicitly set
+`stateDirectory` in each private configuration to the same approved absolute
+directory so all callers consult the same receipts. Never reset that directory
+when starting a new agent session or preparing a new task checkout.
+
+An explicitly authorized notification is a JSON file with a stable `id`,
+`text`, optional `test: true`, and optional `mention: { "id": "USER_GUID",
+"name": "Display name" }`. Send it once with:
+
+```powershell
+npm run notify:teams -- --message .state\notification.json
+```
+
+Use `--config <approved-path>.local.json` to select another deployment.
+The lower-level `--receipt` override remains available for an existing recorded
+integration, but ordinary skill callers must use the canonical shared default;
+changing paths does not make an uncertain send safe to repeat.
+
+The sender checks the designated identity and deployed destination, authenticates
+with an ARM bearer token and never writes tokens or callback URLs to receipts.
+Connector retries are disabled. A receipt is reserved before the single
+outbound POST; an existing receipt blocks another attempt. Missing message IDs,
+timeouts and failed responses are **unconfirmed**, not successful delivery.
+Reconcile the workflow run and channel before considering another send, and
+reuse each notification ID with the same receipt path. This command does not
+enable scheduling or automatically publish evidence, PR or validation events.
+The skill, command and generic workflow template are versioned together in this
+repository. A fresh checkout discovers the skill from `.github\skills` after
+loading this project; no path to a previous Copilot session is needed.
+
 ## Independent agents and contracts
 
 The three top-level entrypoints are `evidence-collector`, `evidence-filter` and
