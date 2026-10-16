@@ -946,7 +946,20 @@
         "sourceRevision": { "$ref": "#/$defs/text" },
         "sourceRef": { "type": "string", "pattern": "^refs/heads/" },
         "queuedAt": { "$ref": "#/$defs/utc" },
-        "blocking": { "const": false }
+        "blocking": { "const": false },
+        "caseSelection": {
+          "type": "object", "additionalProperties": false,
+          "required": ["format", "baseRevision", "sourceRevision", "scenarioPaths"],
+          "properties": {
+            "format": { "const": "1js-new-case-selection-v1" },
+            "baseRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+            "sourceRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+            "scenarioPaths": {
+              "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true,
+              "items": { "$ref": "#/$defs/text" }
+            }
+          }
+        }
       }
     },
     "workerResult": {

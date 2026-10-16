@@ -2324,6 +2324,45 @@ export function draftSourceRef(repo, jobId) {
   'Invalid Draft PR source branch prefix', 'blocked-config');
   return `refs/heads/${prefix}/${jobId}`;
 }
+export async function newCaseBuildSelection(job, revision) {
+  requireThat(/^[a-f0-9]{40}$/.test(job.base_revision ?? '') &&
+    /^[a-f0-9]{40}$/.test(revision) && job.workspace,
+  'New-case validation requires the exact assignment base and authored revision', 'blocked-build');
+  requireThat(await git(job.workspace, ['rev-parse', 'HEAD']) === revision,
+    'New-case validation must use the current authored revision', 'blocked-build');
+  await git(job.workspace, ['merge-base', '--is-ancestor', job.base_revision, revision]);
+  const added = (await gitRaw(job.workspace, [
+    'diff', '--no-renames', '--diff-filter=A', '--name-only', '-z', job.base_revision, revision
+  ])).split('\0').filter(Boolean);
+  const scenarioPaths = added.filter(path =>
+    /^ooui\/apps\/excel-agent-declarative-e2e\/declarative\/scenarios\/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:yaml|yml|json)$/.test(path) ||
+    /^ooui\/apps\/cross-office-client-e2e\/scenarios\/[A-Za-z0-9][A-Za-z0-9._-]*\/scenario\.yaml$/.test(path)).sort();
+  requireThat(scenarioPaths.length > 0 && scenarioPaths.length <= 100,
+    'New-case validation requires 1 through 100 newly added discoverable scenarios; no full-suite fallback',
+    'blocked-build');
+  const selection = {
+    format: '1js-new-case-selection-v1',
+    baseRevision: job.base_revision,
+    sourceRevision: revision,
+    scenarioPaths
+  };
+  requireThat(JSON.stringify(selection).length <= 32768,
+    'New-case selection exceeds the pipeline parameter limit', 'blocked-build');
+  const entries = (await gitRaw(job.workspace, [
+    'ls-tree', '-z', revision, '--', ...scenarioPaths
+  ])).split('\0').filter(Boolean);
+  requireThat(entries.length === scenarioPaths.length &&
+    entries.every(entry => /^100(?:644|755) blob [a-f0-9]+\t/.test(entry)),
+  'New-case validation accepts only regular scenario files', 'blocked-build');
+  return selection;
+}
+export function newCaseBuildGroups(selection) {
+  return [
+    ['excelAgentDeclarative', 'ooui/apps/excel-agent-declarative-e2e/'],
+    ['crossOfficeCowork', 'ooui/apps/cross-office-client-e2e/']
+  ].filter(([, prefix]) => selection.scenarioPaths.some(path => path.startsWith(prefix)))
+    .map(([group]) => group).join(' ');
+}
 export async function queueAdoDraftBuild(config, ledger, job, repo, revision, requestOverride) {
   const build = repo.draftBuild;
   requireThat(build?.enabled === true && build.provider === 'ado' &&
@@ -2331,10 +2370,20 @@ export async function queueAdoDraftBuild(config, ledger, job, repo, revision, re
   'Draft build provider is not configured', 'blocked-build');
   requireThat(repo.pr?.provider === 'ado' && repo.pr.organization && repo.pr.project,
     'Draft build requires the configured ADO project', 'blocked-build');
+  const caseSelection = repo.id === '1js' ? await newCaseBuildSelection(job, revision) : null;
+  const templateParameters = { ...build.templateParameters };
+  if (caseSelection) {
+    requireThat(!Object.hasOwn(templateParameters, 'newCaseSelection') &&
+      !Object.hasOwn(templateParameters, 'newCaseGroups'),
+    'New-case build parameters are controller-owned, not static configuration', 'blocked-build');
+    templateParameters.newCaseSelection = JSON.stringify(caseSelection);
+    templateParameters.newCaseGroups = newCaseBuildGroups(caseSelection);
+  }
   const sourceRef = draftSourceRef(repo, job.id);
   const operationId = `${job.id}:draft-build:${build.id}`;
   ledger.operation(operationId, job.id, 'draft-build', {
-    definitionId: build.definitionId, revision, sourceRef
+    definitionId: build.definitionId, revision, sourceRef,
+    ...(caseSelection ? { caseSelection } : {})
   });
   let request = requestOverride;
   if (!request) {
@@ -2357,17 +2406,22 @@ export async function queueAdoDraftBuild(config, ledger, job, repo, revision, re
     definition: { id: build.definitionId },
     sourceBranch: sourceRef,
     sourceVersion: revision,
-    templateParameters: build.templateParameters ?? {}
+    templateParameters
   });
   requireThat(Number.isInteger(queued.id) && queued.id > 0,
     'ADO Draft build response did not include a build ID', 'blocked-build');
   const fallbackUrl =
     `https://dev.azure.com/${encodeURIComponent(repo.pr.organization)}/${encodeURIComponent(repo.pr.project)}/_build/results?buildId=${queued.id}`;
   const url = queued._links?.web?.href ?? fallbackUrl;
-  const approvedUrlPrefixes = [
-    `https://dev.azure.com/${encodeURIComponent(repo.pr.organization)}/${encodeURIComponent(repo.pr.project)}/_build/`,
-    `https://${encodeURIComponent(repo.pr.organization)}.visualstudio.com/${encodeURIComponent(repo.pr.project)}/_build/`
-  ];
+  const projectPaths = [encodeURIComponent(repo.pr.project)];
+  if (typeof queued.project?.name === 'string' &&
+    queued.project.name.toLowerCase() === repo.pr.project.toLowerCase() &&
+    /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(queued.project.id ?? ''))
+    projectPaths.push(encodeURIComponent(queued.project.id));
+  const approvedUrlPrefixes = projectPaths.flatMap(project => [
+    `https://dev.azure.com/${encodeURIComponent(repo.pr.organization)}/${project}/_build/`,
+    `https://${encodeURIComponent(repo.pr.organization)}.visualstudio.com/${project}/_build/`
+  ]);
   requireThat(typeof url === 'string' && !url.includes('@') &&
     approvedUrlPrefixes.some(prefix => url.toLowerCase().startsWith(prefix.toLowerCase())),
   'ADO Draft build response did not include an approved build URL', 'blocked-build');
@@ -2381,7 +2435,8 @@ export async function queueAdoDraftBuild(config, ledger, job, repo, revision, re
     sourceRevision: revision,
     sourceRef,
     queuedAt: now(),
-    blocking: false
+    blocking: false,
+    ...(caseSelection ? { caseSelection } : {})
   };
   ledger.finishOperation(operationId, 'queued', receipt);
   return receipt;
@@ -3103,6 +3158,8 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
         !await git(current.workspace, ['status', '--porcelain']),
       'Every required gate must pass at the clean current revision; no push permitted',
       'blocked-validation');
+      const caseSelection = repo.id === '1js' && repo.draftBuild?.enabled
+        ? await newCaseBuildSelection(current, revision) : null;
       ledger.operation(`${id}:push`, id, 'push', { revision });
       await (dependencies.pushBranch ?? pushDraftBranch)(
         config, current.workspace, repo, `HEAD:${draftSourceRef(repo, id)}`);
@@ -3114,6 +3171,8 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
           queuedBuild.sourceRevision === revision &&
           queuedBuild.sourceRef === draftSourceRef(repo, id),
         'Queued Draft build does not match the published revision', 'blocked-build');
+        requireThat(!caseSelection || json(queuedBuild.caseSelection) === json(caseSelection),
+          'Queued Draft build does not match the new-case selection', 'blocked-build');
         remoteValidation = [queuedBuild];
       }
       const publicationProposal = {
@@ -3125,7 +3184,10 @@ export async function dispatch(config, ledger, id, dependencies = {}) {
             `\n\n### Remote validation\n\n` +
             `Queued non-blocking build [${remoteValidation[0].id}](${remoteValidation[0].url}) ` +
             `for exact revision \`${revision}\`. The controller does not wait for completion. ` +
-            `A later remote failure remains review evidence and does not erase the local validation result.`)
+            `A later remote failure remains review evidence and does not erase the local validation result.` +
+            (caseSelection ? `\n\nScope: **new cases only**, added since \`${caseSelection.baseRevision}\`. ` +
+              `Existing cases and unaffected suites are not scheduled; this is not a full regression run.\n\n` +
+              caseSelection.scenarioPaths.map(path => `- \`${path}\``).join('\n') : ''))
       };
       draftPR = await (dependencies.createDraft ?? createAdoDraft)(
         config, ledger, current, repo, revision, publicationProposal);

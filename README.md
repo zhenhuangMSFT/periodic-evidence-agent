@@ -665,6 +665,19 @@ an enabled `draftBuild` queues exactly one Pipeline 36540 build for the pushed
 Draft branch and exact revision, records the returned build URL in the Draft PR
 description, and returns immediately without polling the build.
 
+For 1JS, that build validates **new cases only**, not the existing catalog.
+The controller derives newly added, discoverable scenario paths from the exact
+assignment-base-to-authored-commit diff and supplies `newCaseSelection` and
+`newCaseGroups` to the qualified pipeline revision. These parameters are
+controller-owned; do not put them in `draftBuild.templateParameters`. Empty
+selections block before push rather than falling back to the full suite.
+The build receipt and Draft description preserve the paths and both revisions.
+The 1JS pipeline must support this contract: it verifies the Git additions,
+narrows its snapshot execution policy and manifest, applies an exact-title
+filter, and skips unaffected suites. Its ordinary scheduled full regression
+remains unchanged. An older pipeline that rejects these parameters must be
+updated, not retried without the scope.
+
 This mirrors the OfficeAgent authoring contract: deterministic local validation
 blocks publication; longer remote validation is transparent asynchronous review
 evidence. A queued build does not make the Draft remotely qualified, and a later

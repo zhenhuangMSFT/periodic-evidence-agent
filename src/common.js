@@ -209,6 +209,10 @@ export function configAt(path) {
         typeof repo.pr.project === 'string' && repo.pr.project.length > 0 &&
         typeof repo.pr.targetRef === 'string' && repo.pr.targetRef.startsWith('refs/heads/')),
         `Repository ${repo.id} Draft build requires an ADO Draft PR provider`);
+      requireThat(repo.id !== '1js' ||
+        !['newCaseSelection', 'newCaseGroups'].some(key =>
+          Object.hasOwn(build.templateParameters ?? {}, key)),
+      '1JS new-case build parameters are controller-owned');
     }
     if (repo.pr?.sourceBranchPrefix !== undefined) {
       requireThat(typeof repo.pr.sourceBranchPrefix === 'string' &&

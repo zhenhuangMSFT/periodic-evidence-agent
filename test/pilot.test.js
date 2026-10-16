@@ -17,7 +17,7 @@ import { followRelated } from '../src/followup.js';
 import { revisitTracked } from '../src/revisit.js';
 import { collect, acceptReview, report, latestEvidence, reconcile, tick, previousUtcDay, nextDailyWake, readinessFingerprint } from '../src/coordinator.js';
 import { validateSeed, restrictedSession, principalPath, unwrapWorkiq, verifyPrincipal, channelRoot, messageSelect, nextWorkiqPage, validateWorkiqPath, workiqRuntimeError, prepareWorkiq } from '../src/runtime.js';
-import { makeAssignment, makePlannedImprovementAssignment, WorkerTools, provision, checkoutEnvironment, hydrateValidationLfs, prepareValidation, preflightValidationAuthentication, runValidation, pushDraftBranch, queueAdoDraftBuild, createAdoDraft, command, minimalEnvironment, dispatch, repoFor, requireAllowedSkillChanges, verifyPreparedOutputs } from '../src/workers.js';
+import { makeAssignment, makePlannedImprovementAssignment, WorkerTools, provision, checkoutEnvironment, hydrateValidationLfs, prepareValidation, preflightValidationAuthentication, runValidation, pushDraftBranch, newCaseBuildSelection, newCaseBuildGroups, queueAdoDraftBuild, createAdoDraft, command, minimalEnvironment, dispatch, repoFor, requireAllowedSkillChanges, verifyPreparedOutputs } from '../src/workers.js';
 import { recordAreaToImprove, recordTestCoveragePlan } from '../src/improvements.js';
 import { repositoryValidationContract, skillQualificationId } from '../src/repository-skills.js';
 import { outputPathFingerprint } from '../src/output-fingerprint.js';
@@ -434,11 +434,16 @@ test('Draft build configuration is explicit, ADO-only and bounded to one definit
     { enabled: true, provider: 'ado', id: 'build', definitionId: 1,
       templateParameters: { 'bad key': 'value' } },
     { enabled: true, provider: 'ado', id: 'build', definitionId: 1,
-      templateParameters: { account: { secret: true } } }
+      templateParameters: { account: { secret: true } } },
+    { enabled: true, provider: 'ado', id: 'build', definitionId: 1,
+      templateParameters: { newCaseSelection: '{}' } },
+    { enabled: true, provider: 'ado', id: 'build', definitionId: 1,
+      templateParameters: { newCaseGroups: 'excelAgentDeclarative' } }
   ]) {
     repo.draftBuild = invalid;
     writeFileSync(configPath, JSON.stringify(config));
-    assert.throws(() => configAt(configPath), /invalid Draft build configuration/);
+    assert.throws(() => configAt(configPath),
+      /invalid Draft build configuration|new-case build parameters are controller-owned/);
   }
 });
 test('OfficeAgent Excel validation profile converts selectors to package-relative paths', () => {
@@ -2152,6 +2157,119 @@ test('ADO Draft build queues the exact pushed revision once without polling', as
   assert.equal(receipt.buildId, 57329999);
   assert.equal(ledger.status().operations.find(operation =>
     operation.id === `${job.id}:draft-build:1js-pipeline-36540`).state, 'queued');
+});
+test('ADO Draft build URLs accept only configured or response-bound project paths', async t => {
+  const { config, ledger, job, repo } = await fixture(t);
+  repo.pr = {
+    provider: 'ado', organization: 'office', project: 'Office',
+    sourceBranchPrefix: 'user/tester/periodic-evidence-agent'
+  };
+  repo.draftBuild = {
+    enabled: true, provider: 'ado', id: 'build', definitionId: 36540
+  };
+  const projectId = '11111111-2222-3333-4444-555555555555';
+  const cases = [
+    [true, 'Office', projectId, `https://office.visualstudio.com/${projectId}/_build/results?buildId=42`],
+    [true, 'Office', projectId, `https://dev.azure.com/office/${projectId}/_build/results?buildId=42`],
+    [false, 'Other', projectId, `https://office.visualstudio.com/${projectId}/_build/results?buildId=42`],
+    [false, 'Office', 'other', 'https://office.visualstudio.com/other/_build/results?buildId=42'],
+    [false, 'Office', projectId, `https://office.visualstudio.com.attacker.invalid/${projectId}/_build/results?buildId=42`],
+    [false, 'Office', projectId, `https://office.visualstudio.com/99999999-2222-3333-4444-555555555555/_build/results?buildId=42`]
+  ];
+  for (const [index, [accepted, name, id, href]] of cases.entries()) {
+    const queued = queueAdoDraftBuild(config, ledger, { ...job, id: `${job.id}-${index}` },
+      repo, 'd'.repeat(40), async () => ({
+        id: 42, project: { name, id }, _links: { web: { href } }
+      }));
+    if (accepted) assert.equal((await queued).url, href);
+    else await assert.rejects(queued, /approved build URL/);
+  }
+});
+test('1JS Draft builds select only added scenarios at the final authored SHA', async t => {
+  const { config, ledger, job, repo, g } = await fixture(t);
+  const excelRoot = 'ooui/apps/excel-agent-declarative-e2e/declarative/scenarios';
+  const crossRoot = 'ooui/apps/cross-office-client-e2e/scenarios/new-case';
+  mkdirSync(join(repo.referenceCheckout, excelRoot), { recursive: true });
+  writeFileSync(join(repo.referenceCheckout, excelRoot, 'existing.yaml'), 'id: existing\n');
+  await g(['add', '.']);
+  await g(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '--quiet', '-m', 'Existing scenario']);
+  const baseRevision = (await g(['rev-parse', 'HEAD'])).stdout.trim();
+  mkdirSync(join(repo.referenceCheckout, crossRoot), { recursive: true });
+  writeFileSync(join(repo.referenceCheckout, excelRoot, 'existing.yaml'), 'id: existing\nname: Updated\n');
+  writeFileSync(join(repo.referenceCheckout, excelRoot, 'new-grid.yaml'), 'id: new-grid\n');
+  writeFileSync(join(repo.referenceCheckout, crossRoot, 'scenario.yaml'), 'id: new-cross\n');
+  writeFileSync(join(repo.referenceCheckout, 'registry.yaml'), 'not a scenario\n');
+  await g(['add', '.']);
+  await g(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '--quiet', '-m', 'Authored cases and registry']);
+  const revision = (await g(['rev-parse', 'HEAD'])).stdout.trim();
+  const current = { ...job, workspace: repo.referenceCheckout, base_revision: baseRevision };
+  const selection = await newCaseBuildSelection(current, revision);
+  assert.deepEqual(selection, {
+    format: '1js-new-case-selection-v1',
+    baseRevision,
+    sourceRevision: revision,
+    scenarioPaths: [`${crossRoot}/scenario.yaml`, `${excelRoot}/new-grid.yaml`]
+  });
+  assert.equal(newCaseBuildGroups(selection), 'excelAgentDeclarative crossOfficeCowork');
+  repo.id = '1js';
+  repo.pr = { provider: 'ado', organization: 'office', project: 'Office' };
+  repo.draftBuild = {
+    enabled: true, provider: 'ado', id: 'new-cases', definitionId: 36540,
+    templateParameters: { excelAgentExperience: 'omni' }
+  };
+  let requests = 0;
+  const request = async body => {
+    requests++;
+    assert.equal(body.sourceVersion, revision);
+    assert.equal(body.templateParameters.excelAgentExperience, 'omni');
+    assert.equal(body.templateParameters.newCaseGroups, 'excelAgentDeclarative crossOfficeCowork');
+    assert.deepEqual(JSON.parse(body.templateParameters.newCaseSelection), selection);
+    return { id: 42 };
+  };
+  const receipt = await queueAdoDraftBuild(config, ledger, current, repo, revision, request);
+  assert.deepEqual(receipt.caseSelection, selection);
+  await assert.rejects(queueAdoDraftBuild(config, ledger, current, repo, revision, request),
+    /already started/);
+  assert.equal(requests, 1);
+  await assert.rejects(newCaseBuildSelection(current, baseRevision), /current authored revision/);
+  repo.draftBuild.templateParameters.newCaseSelection = '{}';
+  await assert.rejects(queueAdoDraftBuild(config, ledger, current, repo, revision, request),
+    /controller-owned/);
+  assert.equal(requests, 1);
+});
+test('new-case builds reject empty, existing-only, non-regular and excessive selections', async t => {
+  const { repo, job, g } = await fixture(t);
+  const baseRevision = (await g(['rev-parse', 'HEAD'])).stdout.trim();
+  const current = { ...job, workspace: repo.referenceCheckout, base_revision: baseRevision };
+  await assert.rejects(newCaseBuildSelection(current, baseRevision), /no full-suite fallback/);
+  writeFileSync(join(repo.referenceCheckout, 'src', 'value.js'), 'export const value = 2;\n');
+  await g(['add', '.']);
+  await g(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '--quiet', '-m', 'Update existing source']);
+  const updated = (await g(['rev-parse', 'HEAD'])).stdout.trim();
+  await assert.rejects(newCaseBuildSelection(current, updated), /no full-suite fallback/);
+  const oid = (await g(['hash-object', '-w', 'src/value.js'])).stdout.trim();
+  await g(['update-index', '--add', '--cacheinfo',
+    `120000,${oid},ooui/apps/excel-agent-declarative-e2e/declarative/scenarios/link.yaml`]);
+  await g(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '--quiet', '-m', 'Non-regular scenario']);
+  const linked = (await g(['rev-parse', 'HEAD'])).stdout.trim();
+  await assert.rejects(newCaseBuildSelection(current, linked), /regular scenario files/);
+  await g(['update-index', '--force-remove',
+    'ooui/apps/excel-agent-declarative-e2e/declarative/scenarios/link.yaml']);
+  for (let batch = 0; batch < 2; batch++) {
+    const entries = Array.from({ length: 50 }, (_, index) => [
+      '--cacheinfo',
+      `100644,${oid},ooui/apps/excel-agent-declarative-e2e/declarative/scenarios/${batch}-${index}-${'x'.repeat(300)}.yaml`
+    ]).flat();
+    await g(['update-index', '--add', ...entries]);
+  }
+  await g(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '--quiet', '-m', 'Excessive selection parameter']);
+  const excessive = (await g(['rev-parse', 'HEAD'])).stdout.trim();
+  await assert.rejects(newCaseBuildSelection(current, excessive), /pipeline parameter limit/);
 });
 test('ADO draft provider uses a configured user source branch namespace', async t => {
   const { config, ledger, job, repo } = await fixture(t);
